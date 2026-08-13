@@ -2,6 +2,7 @@ import type {
   ProjectGraph,
   ProjectStatus,
 } from '../domain/types';
+import { selectProjectOrder } from './projectOrder';
 
 export interface ProjectListMilestoneSummary {
   readonly completed: number;
@@ -60,9 +61,12 @@ export function selectProjectListRows(
     milestonesByProjectId.set(milestone.projectId, summary);
   }
 
-  return Object.freeze(graph.projects.map((project) => {
+  const projectsById = new Map(graph.projects.map((project) => [project.id, project]));
+  return Object.freeze(selectProjectOrder(graph).flatMap((projectId) => {
+    const project = projectsById.get(projectId);
+    if (!project) return [];
     const summary = milestonesByProjectId.get(project.id);
-    return Object.freeze({
+    return [Object.freeze({
       projectId: project.id,
       ...(project.projectCode ? { projectCode: project.projectCode } : {}),
       projectName: project.name,
@@ -75,6 +79,6 @@ export function selectProjectListRows(
       ...(summary
         ? { milestoneSummary: Object.freeze({ ...summary }) }
         : {}),
-    });
+    })];
   }));
 }

@@ -10,3 +10,4 @@ export {
   type ProjectListMilestoneSummary,
   type ProjectListRow,
 } from './projectList';
+export { selectProjectOrder } from './projectOrder';
