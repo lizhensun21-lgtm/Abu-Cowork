@@ -105,6 +105,7 @@ const enUS: TranslationDict = {
     newTask: 'New Task',
     projectFiles: 'Project Files',
     backToConversations: 'Back to conversations',
+    projectManagement: 'Project Management',
     automation: 'Automation',
     scheduledTasks: 'Scheduled Tasks',
     triggers: 'Triggers',

@@ -105,6 +105,7 @@ const zhCN: TranslationDict = {
     newTask: '新建任务',
     projectFiles: '项目文件',
     backToConversations: '返回会话',
+    projectManagement: '项目管理',
     automation: '自动化',
     scheduledTasks: '定时任务',
     triggers: '监听事件',

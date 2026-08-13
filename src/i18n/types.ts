@@ -132,6 +132,7 @@ export interface TranslationDict {
     newTask: string;
     projectFiles: string;
     backToConversations: string;
+    projectManagement: string;
     automation: string;
     scheduledTasks: string;
     triggers: string;

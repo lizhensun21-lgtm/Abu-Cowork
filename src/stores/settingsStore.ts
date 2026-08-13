@@ -121,7 +121,7 @@ function createDefaultProviders(): ProviderInstance[] {
 // View mode types
 // ============================================================
 
-export type ViewMode = 'chat' | 'automation' | 'toolbox' | 'settings' | 'todos' | 'inbox';
+export type ViewMode = 'chat' | 'project-management' | 'automation' | 'toolbox' | 'settings' | 'todos' | 'inbox';
 export type AutomationTab = 'schedule' | 'trigger';
 export type SystemSettingsTab = 'general' | 'capabilities' | 'ai-services' | 'sandbox' | 'im-channels' | 'pet' | 'personal-memory' | 'soul' | 'diagnostic' | 'usage' | 'about' | 'feedback' | 'sponsor' | 'enterprise' | 'labs';
 export type ToolboxTab = 'skills' | 'agents' | 'mcp';

@@ -13,6 +13,7 @@ import CapabilitySetupDialog from '@/components/settings/CapabilitySetupDialog';
 import ToolboxView from '@/components/settings/ToolboxModal';
 import TodoView from '@/components/todos/TodoView';
 import InboxView from '@/components/inbox/InboxView';
+import ProjectManagementWorkspace from '@/components/project-management/ProjectManagementWorkspace';
 import { useLabsFlag, resolveLabsFlag } from '@/core/labs/resolve';
 import { LABS_TODOS_INBOX, LABS_PET } from '@/core/labs/registry';
 import { resolvePetBootAction } from '@/core/pet/petBoot';
@@ -754,6 +755,7 @@ function App() {
                 {viewMode === 'toolbox' && <ToolboxView />}
                 {viewMode === 'todos' && <TodoView />}
                 {viewMode === 'inbox' && <InboxView />}
+                {viewMode === 'project-management' && <ProjectManagementWorkspace />}
                 {(viewMode === 'chat' || !viewMode) && <ChatView />}
               </main>
 

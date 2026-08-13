@@ -3,6 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { reconcileActiveProvider, useSettingsStore, getDefaultImageBackend, getUsableImageBackend, bootstrapSecrets } from './settingsStore';
 import type { ProviderInstance, ActiveModel, ImageGenBackend } from '@/types/provider';
 
+describe('workspace navigation', () => {
+  it('accepts project-management as a top-level view mode', () => {
+    useSettingsStore.getState().setViewMode('project-management');
+
+    expect(useSettingsStore.getState().viewMode).toBe('project-management');
+  });
+});
+
 // ─── Test fixture helpers ─────────────────────────────────────
 
 function makeProvider(overrides: Partial<ProviderInstance> = {}): ProviderInstance {
