@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage } from '@/i18n';
 import type { ProjectManagementState } from '@/project-management/state';
+import { projectMembershipId } from '@/project-management/domain';
 import ProjectManagementWorkspace from './ProjectManagementWorkspace';
 
 const runtime = vi.hoisted(() => ({
@@ -67,6 +68,68 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
 
     expect(screen.getByText('No projects yet')).toBeInTheDocument();
     expect(runtime.state.graph.projects).toEqual([]);
+  });
+
+  it('renders a ready ProjectGraph as a read-only project list with real relationships', () => {
+    runtime.state = {
+      ...runtime.state,
+      initializationStatus: 'ready',
+      graph: {
+        projects: [{
+          id: 'project-1', name: 'Apollo', projectCode: 'PM-001',
+          projectStatus: 'active', startDate: '2026-01-01', endDate: '2026-12-31',
+        }],
+        projectTimelines: [{
+          id: 'timeline-1', projectId: 'project-1', lane: 'YD', name: 'YD',
+          startDate: '2026-01-01', endDate: '2026-12-31', keyResources: [],
+        }],
+        milestones: [{
+          id: 'milestone-1', projectId: 'project-1', timelineId: 'timeline-1', lane: 'YD',
+          title: 'Gate', date: '2026-03-01', code: 'G0', status: 'completed',
+        }],
+        persons: [{ id: 'person-1', name: 'Alex Chen' }],
+        projectMemberships: [{
+          id: projectMembershipId('project-1', 'person-1'),
+          projectId: 'project-1', personId: 'person-1',
+          roles: ['project_manager'], status: 'active',
+        }],
+        projectTeams: [{ projectId: 'project-1' }],
+      },
+    };
+    render(<ProjectManagementWorkspace />);
+
+    const row = screen.getByTestId('project-list-row-project-1');
+    expect(row).toHaveTextContent('PM-001');
+    expect(row).toHaveTextContent('Apollo');
+    expect(row).toHaveTextContent('Alex Chen');
+    expect(row).toHaveTextContent('1 / 1 completed');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders missing optional Project values as an em dash without an owner fallback', () => {
+    runtime.state = {
+      ...runtime.state,
+      initializationStatus: 'ready',
+      graph: {
+        ...runtime.state.graph,
+        projects: [{
+          id: 'project-1', name: 'No owner', projectStatus: 'planning',
+          startDate: '2026-01-01', endDate: '2026-12-31',
+        }],
+        projectTimelines: [{
+          id: 'timeline-1', projectId: 'project-1', lane: 'YD', name: 'YD',
+          startDate: '2026-01-01', endDate: '2026-12-31', keyResources: [],
+        }],
+        projectTeams: [{ projectId: 'project-1', externalProjectManager: 'Legacy Lead' }],
+      },
+    };
+    render(<ProjectManagementWorkspace />);
+
+    const row = screen.getByTestId('project-list-row-project-1');
+    expect(row).not.toHaveTextContent('Legacy Lead');
+    expect(row.querySelectorAll('td')[0]).toHaveTextContent('—');
+    expect(row.querySelectorAll('td')[5]).toHaveTextContent('—');
+    expect(row.querySelectorAll('td')[6]).toHaveTextContent('—');
   });
 
   it('renders initialization failure instead of the ready empty state', () => {

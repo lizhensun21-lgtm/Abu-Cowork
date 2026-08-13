@@ -191,6 +191,20 @@ export interface TranslationDict {
     initializing: string;
     empty: string;
     initializationError: string;
+    projectCount: string;
+    projectCode: string;
+    projectName: string;
+    projectStatus: string;
+    startDate: string;
+    endDate: string;
+    projectManager: string;
+    milestones: string;
+    milestoneProgress: string;
+    statusPlanning: string;
+    statusActive: string;
+    statusPaused: string;
+    statusClosed: string;
+    statusCancelled: string;
   };
 
   // Todos
