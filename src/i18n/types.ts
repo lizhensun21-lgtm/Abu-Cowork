@@ -187,6 +187,12 @@ export interface TranslationDict {
     searchNoResults: string;
   };
 
+  projectManagement: {
+    initializing: string;
+    empty: string;
+    initializationError: string;
+  };
+
   // Todos
   todos: {
     title: string;

@@ -160,6 +160,12 @@ const enUS: TranslationDict = {
     searchNoResults: 'No matches found',
   },
 
+  projectManagement: {
+    initializing: 'Initializing project management…',
+    empty: 'No projects yet',
+    initializationError: 'Project management could not be initialized.',
+  },
+
   todos: {
     title: 'Todos',
     newTodo: 'New Todo',

@@ -160,6 +160,12 @@ const zhCN: TranslationDict = {
     searchNoResults: '无匹配结果',
   },
 
+  projectManagement: {
+    initializing: '正在初始化项目管理…',
+    empty: '暂无项目',
+    initializationError: '项目管理初始化失败。',
+  },
+
   todos: {
     title: '待办',
     newTodo: '新建待办',
