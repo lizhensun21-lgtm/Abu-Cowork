@@ -2,12 +2,11 @@ import { useEffect, useMemo } from 'react';
 import { FolderKanban, LoaderCircle, TriangleAlert } from 'lucide-react';
 
 import { useI18n } from '@/i18n';
-import { selectProjectListRows } from '@/project-management/application';
 import {
   initializeProjectManagement,
   useProjectManagementStore,
 } from '@/project-management/state';
-import { ProjectList } from './ProjectList';
+import { TimelineRenderer } from './timeline/TimelineRenderer';
 
 export default function ProjectManagementWorkspace() {
   const { t } = useI18n();
@@ -16,10 +15,7 @@ export default function ProjectManagementWorkspace() {
   );
   const projectGraph = useProjectManagementStore((state) => state.graph);
   const initializationError = useProjectManagementStore((state) => state.error);
-  const projectRows = useMemo(
-    () => selectProjectListRows(projectGraph),
-    [projectGraph],
-  );
+  const projectCount = useMemo(() => projectGraph.projects.length, [projectGraph]);
 
   useEffect(() => {
     void initializeProjectManagement().catch(() => {
@@ -50,9 +46,9 @@ export default function ProjectManagementWorkspace() {
           <h1 id="project-management-title" className="text-title font-semibold text-[var(--abu-text-primary)]">
             {t.sidebar.projectManagement}
           </h1>
-          {initializationStatus === 'ready' && projectRows.length > 0 ? (
+          {initializationStatus === 'ready' && projectCount > 0 ? (
             <p className="text-minor text-[var(--abu-text-muted)]">
-              {t.projectManagement.projectCount.replace('{count}', String(projectRows.length))}
+              {t.projectManagement.projectCount.replace('{count}', String(projectCount))}
             </p>
           ) : null}
         </div>
@@ -85,14 +81,16 @@ export default function ProjectManagementWorkspace() {
             </button>
           </div>
         </div>
-      ) : projectRows.length === 0 ? (
+      ) : projectCount === 0 ? (
         <div className="flex flex-1 items-center justify-center px-8 pb-8 text-center">
           <p className="text-body text-[var(--abu-text-muted)]">
             {t.projectManagement.empty}
           </p>
         </div>
       ) : (
-        <ProjectList rows={projectRows} />
+        <div className="min-h-0 flex-1 px-6 pb-6">
+          <TimelineRenderer graph={projectGraph} />
+        </div>
       )}
     </section>
   );

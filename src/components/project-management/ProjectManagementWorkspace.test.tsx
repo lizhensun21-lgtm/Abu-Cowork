@@ -103,6 +103,8 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     expect(row).toHaveTextContent('Apollo');
     expect(row).toHaveTextContent('Alex Chen');
     expect(row).toHaveTextContent('1 / 1 completed');
+    expect(screen.getByTestId('project-timeline-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-bar-timeline-1')).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
@@ -127,9 +129,9 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
 
     const row = screen.getByTestId('project-list-row-project-1');
     expect(row).not.toHaveTextContent('Legacy Lead');
-    expect(row.querySelectorAll('td')[0]).toHaveTextContent('—');
-    expect(row.querySelectorAll('td')[5]).toHaveTextContent('—');
-    expect(row.querySelectorAll('td')[6]).toHaveTextContent('—');
+    expect(screen.getByTestId('project-code-project-1')).toHaveTextContent('—');
+    expect(screen.getByTestId('project-manager-project-1')).toHaveTextContent('—');
+    expect(screen.getByTestId('project-milestones-project-1')).toHaveTextContent('—');
   });
 
   it('renders initialization failure instead of the ready empty state', () => {
