@@ -25,6 +25,17 @@ export interface ProjectGraphValidationResult {
   issues: ProjectGraphValidationIssue[];
 }
 
+export function createEmptyProjectGraph(): ProjectGraph {
+  return {
+    projects: [],
+    projectTimelines: [],
+    milestones: [],
+    persons: [],
+    projectMemberships: [],
+    projectTeams: [],
+  };
+}
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PROJECT_STATUS_SET = new Set<string>(PROJECT_STATUSES);
 const LIFECYCLE_PHASE_SET = new Set<string>(LIFECYCLE_PHASES);
