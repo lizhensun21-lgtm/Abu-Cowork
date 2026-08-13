@@ -2003,6 +2003,12 @@ const zhCN: TranslationDict = {
     downloadFailed: '下载更新失败',
     retry: '重试',
     viewOnGitHub: '在 GitHub 查看完整更新说明',
+    edition: '发行版',
+    distribution: 'Distribution',
+    projectManagementEdition: 'Abu Project Management Edition',
+    basedOn: '基于',
+    updateChannel: '更新通道',
+    updateChannelDisabled: '已禁用',
   },
 
   about: {

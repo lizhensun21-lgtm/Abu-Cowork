@@ -19,6 +19,12 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 // Silence the notice bus (irrelevant to notes-language behavior).
 vi.mock('@/core/notice/bus', () => ({ publish: vi.fn() }));
 
+// Exercise the retained upstream updater path; project-management builds are
+// covered by the Electron host's fail-closed distribution tests.
+vi.mock('@/utils/version', () => ({
+  ABU_DISTRIBUTION: 'upstream-official',
+}));
+
 import { checkForUpdate, downloadAndInstallUpdate } from './checker';
 
 const EN_BODY = 'English release notes for v0.32.0 — multi-tab workspace and more.';

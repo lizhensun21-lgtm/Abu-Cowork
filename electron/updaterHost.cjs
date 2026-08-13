@@ -34,12 +34,13 @@
  * becomes `autoUpdater.quitAndInstall()` instead of plain relaunch (with the
  * quitting guard marked first so the preventable-close handler lets the
  * native window-close through — see that function's JSDoc).
- * `autoInstallOnAppQuit` stays on as a safety net (normal quit also applies
- * the update).
+ * Normal quit never applies an update. Installation remains an explicit
+ * restart action after a verified download.
  *
  * ## Feed resolution
  *  - Official packaged build: release CI embeds `app-update.yml` plus the
- *    immutable `officialBuild` marker → generic provider at the OSS bucket.
+ *    immutable `officialBuild` marker plus `distribution=upstream-official`
+ *    → generic provider at the OSS bucket.
  *    Source/fork packages have neither and keep the updater disabled.
  *  - Dev/harness: armed only when ABU_UPDATER_FEED_URL is set (e.g. the mock
  *    feed in electron/spike/updaterVerify.cjs) — forceDevUpdateConfig plus an
@@ -50,7 +51,7 @@
 
 const { app } = require('electron');
 const { parseChannelId, sendChannelMessage } = require('./channelBridge.cjs');
-const { isOfficialBuild } = require('./releaseMetadata.cjs');
+const { canUseUpstreamUpdater, getDistribution } = require('./releaseMetadata.cjs');
 
 /** Sentinel returned when `cmd` isn't one of the updater family. */
 const UPDATER_MISS = Symbol('updater-dispatch-miss');
@@ -82,8 +83,8 @@ function getUpdater() {
   // A source/fork package must never consume Abu's production feed merely
   // because it retained the upstream app id or product name. Official CI sets
   // the immutable package marker and embeds app-update.yml together.
-  if (app.isPackaged && !isOfficialBuild(app)) {
-    log('non-official packaged build — updater disabled');
+  if (app.isPackaged && !canUseUpstreamUpdater(app)) {
+    log(`distribution=${getDistribution(app)} — upstream updater disabled`);
     updater = null;
     return updater;
   }
@@ -106,7 +107,7 @@ function getUpdater() {
 
   const { autoUpdater } = require('electron-updater');
   autoUpdater.autoDownload = false; // the frontend drives download explicitly
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = {
     info: (m) => log(`electron-updater: ${m}`),
     warn: (m) => console.warn(`[updaterHost] electron-updater: ${m}`),
@@ -184,6 +185,10 @@ async function check() {
  * @param {Electron.IpcMainInvokeEvent | undefined} event
  */
 async function downloadAndInstall(a, event) {
+  if (app.isPackaged && !canUseUpstreamUpdater(app)) {
+    pendingInstall = false;
+    throw new Error(`updater disabled for distribution: ${getDistribution(app)}`);
+  }
   const au = getUpdater();
   if (!au) throw new Error('updater not armed (dev shell without ABU_UPDATER_FEED_URL)');
 
@@ -248,6 +253,10 @@ async function downloadAndInstall(a, event) {
  * rather than silently booting the old version on the second click.
  */
 function quitAndInstallIfPending() {
+  if (app.isPackaged && !canUseUpstreamUpdater(app)) {
+    pendingInstall = false;
+    return false;
+  }
   if (!pendingInstall || !updater) return false;
   // Lazy require: tauriHost requires this module at top level, so requiring
   // it back at load time WOULD be a genuine cycle; at call time it's settled.

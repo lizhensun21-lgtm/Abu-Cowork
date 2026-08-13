@@ -5,7 +5,7 @@ import { getDeviceId } from '@/utils/deviceId';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import abuAvatar from '@/assets/abu-avatar.png';
-import { APP_VERSION } from '@/utils/version';
+import { ABU_DISTRIBUTION, ABU_UPSTREAM_BASE_VERSION, APP_VERSION } from '@/utils/version';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { checkForUpdate, downloadAndInstallUpdate, restartApp } from '@/core/updates/checker';
 import { getUpdateProgressPresentation } from '@/core/updates/progress';
@@ -102,6 +102,28 @@ export default function AboutSection() {
           <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.currentVersion}</span>
           <span className="text-body font-semibold text-[var(--abu-text-primary)]">v{APP_VERSION}</span>
         </div>
+        {ABU_DISTRIBUTION === 'abu-project-management' && (
+          <>
+            <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
+              <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.edition}</span>
+              <span className="text-body font-semibold text-[var(--abu-text-primary)]">
+                {t.updates.projectManagementEdition}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
+              <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.distribution}</span>
+              <span className="text-body text-[var(--abu-text-secondary)]">{ABU_DISTRIBUTION}</span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
+              <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.basedOn}</span>
+              <span className="text-body text-[var(--abu-text-secondary)]">Abu v{ABU_UPSTREAM_BASE_VERSION}</span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
+              <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.updateChannel}</span>
+              <span className="text-body text-[var(--abu-text-secondary)]">{t.updates.updateChannelDisabled}</span>
+            </div>
+          </>
+        )}
         <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
           <span className="text-body text-[var(--abu-text-tertiary)]">{t.about.deviceId}</span>
           <button
@@ -117,7 +139,7 @@ export default function AboutSection() {
       </div>
 
       {/* Update card */}
-      {updateInfo && (
+      {ABU_DISTRIBUTION === 'upstream-official' && updateInfo && (
         <div className="rounded-xl border border-[var(--abu-clay-ring)] bg-[var(--abu-clay-5)] p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-body font-semibold text-[var(--abu-clay)]">{t.updates.newVersionAvailable}</span>
@@ -234,7 +256,7 @@ export default function AboutSection() {
       )}
 
       {/* Check for updates button */}
-      <div className="space-y-2">
+      {ABU_DISTRIBUTION === 'upstream-official' && <div className="space-y-2">
         <button
           onClick={handleCheckUpdate}
           disabled={updateChecking || !!downloadProgress}
@@ -273,7 +295,7 @@ export default function AboutSection() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Footer */}
       <div className="text-center space-y-2 pt-2">

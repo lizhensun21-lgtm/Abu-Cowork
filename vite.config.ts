@@ -14,6 +14,16 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error(`Invalid ABU_BUILD_VERSION: ${version}`)
 }
 
+const DISTRIBUTIONS = ['upstream-official', 'abu-project-management', 'source'] as const
+const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-management'
+if (!DISTRIBUTIONS.includes(distribution as (typeof DISTRIBUTIONS)[number])) {
+  throw new Error(`Invalid ABU_DISTRIBUTION: ${distribution}`)
+}
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.34.2'
+if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
+  throw new Error(`Invalid ABU_UPSTREAM_BASE_VERSION: ${upstreamBaseVersion}`)
+}
+
 // Build target switch: OSS (default) or Enterprise
 // ABU_BUILD_TARGET=enterprise → resolves @enterprise-modules to sibling private repo
 const BUILD_TARGET = process.env.ABU_BUILD_TARGET ?? 'oss'
@@ -28,6 +38,8 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
+    __ABU_DISTRIBUTION__: JSON.stringify(distribution),
+    __ABU_UPSTREAM_BASE_VERSION__: JSON.stringify(upstreamBaseVersion),
     // Build-target flag for the client: enterprise-only UI (the enterprise-mode
     // settings entry + bind flow) is gated on this so it never shows in OSS builds.
     __ENTERPRISE_BUILD__: JSON.stringify(BUILD_TARGET === 'enterprise'),

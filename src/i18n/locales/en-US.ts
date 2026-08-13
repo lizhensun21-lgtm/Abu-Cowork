@@ -2002,6 +2002,12 @@ const enUS: TranslationDict = {
     downloadFailed: 'Download failed',
     retry: 'Retry',
     viewOnGitHub: 'View full release notes on GitHub',
+    edition: 'Edition',
+    distribution: 'Distribution',
+    projectManagementEdition: 'Abu Project Management Edition',
+    basedOn: 'Based on',
+    updateChannel: 'Update channel',
+    updateChannelDisabled: 'Disabled',
   },
 
   about: {

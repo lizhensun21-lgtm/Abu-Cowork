@@ -9,6 +9,8 @@
 {
   const g = globalThis as Record<string, unknown>;
   if (typeof g.__APP_VERSION__ === 'undefined') g.__APP_VERSION__ = '0.0.0-eval';
+  if (typeof g.__ABU_DISTRIBUTION__ === 'undefined') g.__ABU_DISTRIBUTION__ = 'source';
+  if (typeof g.__ABU_UPSTREAM_BASE_VERSION__ === 'undefined') g.__ABU_UPSTREAM_BASE_VERSION__ = '0.34.2';
   if (typeof g.__ENTERPRISE_BUILD__ === 'undefined') g.__ENTERPRISE_BUILD__ = false;
 }
 

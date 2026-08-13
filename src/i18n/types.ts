@@ -2143,6 +2143,12 @@ export interface TranslationDict {
     downloadFailed: string;
     retry: string;
     viewOnGitHub: string;
+    edition: string;
+    distribution: string;
+    projectManagementEdition: string;
+    basedOn: string;
+    updateChannel: string;
+    updateChannelDisabled: string;
   };
 
   // About

@@ -84,6 +84,8 @@ test('electron-builder keeps migration and the official updater disabled unless 
   const base = await getConfig(projectDir, null, null);
   assert.equal(base.extraMetadata.abuRelease.tauriMigration, false);
   assert.equal(base.extraMetadata.abuRelease.officialBuild, false);
+  assert.equal(base.extraMetadata.abuRelease.distribution, 'abu-project-management');
+  assert.equal(base.extraMetadata.abuRelease.upstreamBaseVersion, '0.34.2');
   assert.equal(base.publish, null);
 
   const parser = configureBuildCommand(createYargs());
@@ -92,6 +94,7 @@ test('electron-builder keeps migration and the official updater disabled unless 
     '--config.extraMetadata.version=0.34.0',
     '--config.extraMetadata.abuRelease.tauriMigration=true',
     '--config.extraMetadata.abuRelease.officialBuild=true',
+    '--config.extraMetadata.abuRelease.distribution=upstream-official',
     '--config.publish.provider=generic',
     '--config.publish.url=https://updates.example.test/electron/mac-arm64/',
   ]);
@@ -99,6 +102,7 @@ test('electron-builder keeps migration and the official updater disabled unless 
   const transition = await getConfig(projectDir, null, normalized.config);
   assert.equal(transition.extraMetadata.abuRelease.tauriMigration, true);
   assert.equal(transition.extraMetadata.abuRelease.officialBuild, true);
+  assert.equal(transition.extraMetadata.abuRelease.distribution, 'upstream-official');
   assert.equal(typeof transition.extraMetadata.abuRelease.tauriMigration, 'boolean');
   assert.equal(typeof transition.extraMetadata.abuRelease.officialBuild, 'boolean');
   assert.equal(transition.extraMetadata.version, '0.34.0');

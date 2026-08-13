@@ -17,7 +17,7 @@ import {
 import DefaultUserAvatar from '@/components/common/DefaultUserAvatar';
 import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { APP_VERSION } from '@/utils/version';
+import { ABU_DISTRIBUTION, APP_VERSION } from '@/utils/version';
 import { checkForUpdate, downloadAndInstallUpdate, restartApp } from '@/core/updates/checker';
 import { getUpdateProgressPresentation } from '@/core/updates/progress';
 
@@ -192,7 +192,9 @@ export default function AccountMenu({ onEditProfile }: { onEditProfile: () => vo
         >
           {userNickname || t.sidebar.defaultNickname}
         </span>
-        {updateInfo && !open && <span className="w-2 h-2 rounded-full bg-[var(--abu-danger-solid)] shrink-0" />}
+        {ABU_DISTRIBUTION === 'upstream-official' && updateInfo && !open && (
+          <span className="w-2 h-2 rounded-full bg-[var(--abu-danger-solid)] shrink-0" />
+        )}
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-[var(--abu-text-muted)]" strokeWidth={1.6} />
       </button>
 
@@ -267,34 +269,35 @@ export default function AccountMenu({ onEditProfile }: { onEditProfile: () => vo
             onClick={() => run(() => openSystemSettings('feedback'))}
           />
 
-          {/* Check for updates — runs the real flow inline (keeps popover open) */}
-          <button
-            role="menuitem"
-            onClick={updateRow.onClick}
-            disabled={updateRow.disabled}
-            className={cn(
-              'w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-colors',
-              updateRow.disabled ? 'cursor-default' : 'hover:bg-[var(--abu-bg-hover)]'
-            )}
-          >
-            <UpdateIcon
+          {ABU_DISTRIBUTION === 'upstream-official' && (
+            <button
+              role="menuitem"
+              onClick={updateRow.onClick}
+              disabled={updateRow.disabled}
               className={cn(
-                'h-[17px] w-[17px] shrink-0',
-                updateRow.accent ? 'text-[var(--abu-clay)]' : 'text-[var(--abu-text-tertiary)]',
-                updateRow.spin && 'animate-spin'
-              )}
-              strokeWidth={1.6}
-            />
-            <span
-              className={cn(
-                'flex-1 text-body',
-                updateRow.accent ? 'text-[var(--abu-clay)] font-medium' : 'text-[var(--abu-text-secondary)]'
+                'w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left transition-colors',
+                updateRow.disabled ? 'cursor-default' : 'hover:bg-[var(--abu-bg-hover)]'
               )}
             >
-              {updateRow.label}
-            </span>
-            {updateRow.trailing}
-          </button>
+              <UpdateIcon
+                className={cn(
+                  'h-[17px] w-[17px] shrink-0',
+                  updateRow.accent ? 'text-[var(--abu-clay)]' : 'text-[var(--abu-text-tertiary)]',
+                  updateRow.spin && 'animate-spin'
+                )}
+                strokeWidth={1.6}
+              />
+              <span
+                className={cn(
+                  'flex-1 text-body',
+                  updateRow.accent ? 'text-[var(--abu-clay)] font-medium' : 'text-[var(--abu-text-secondary)]'
+                )}
+              >
+                {updateRow.label}
+              </span>
+              {updateRow.trailing}
+            </button>
+          )}
         </div>
       )}
     </div>

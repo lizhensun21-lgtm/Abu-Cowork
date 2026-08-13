@@ -150,6 +150,7 @@ jobs:
           # Feed the renderer the identical candidate so its displayed and
           # reported version matches Electron's app.getVersion().
           echo "ABU_BUILD_VERSION=$TRANSITION_VERSION" >> "$GITHUB_ENV"
+          echo "ABU_DISTRIBUTION=$([[ "$OFFICIAL_BUILD" == "true" ]] && echo upstream-official || echo abu-project-management)" >> "$GITHUB_ENV"
           echo "ABU_ELECTRON_FEED=https://abu-agent.oss-cn-beijing.aliyuncs.com/electron/${FEED_CHANNEL}/" >> "$GITHUB_ENV"
           echo "ABU_OFFICIAL_BUILD=$OFFICIAL_BUILD" >> "$GITHUB_ENV"
 
@@ -247,6 +248,7 @@ jobs:
           if [[ "$ABU_OFFICIAL_BUILD" == "true" ]]; then
             BUILDER_ARGS+=(
               "--config.extraMetadata.abuRelease.officialBuild=true"
+              "--config.extraMetadata.abuRelease.distribution=upstream-official"
               "--config.publish.provider=generic"
               "--config.publish.url=${ABU_ELECTRON_FEED}"
             )
@@ -546,6 +548,8 @@ jobs:
             "${{ github.repository }}" -eq "PM-Shawn/Abu-Cowork"
           "ABU_OFFICIAL_BUILD=$($officialBuild.ToString().ToLowerInvariant())" |
             Out-File -FilePath $env:GITHUB_ENV -Append
+          "ABU_DISTRIBUTION=$(if ($officialBuild) { 'upstream-official' } else { 'abu-project-management' })" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
           $release = "${{ inputs.transition_release }}" -eq "true"
           "ABU_TRANSITION_RELEASE=$($release.ToString().ToLowerInvariant())" |
             Out-File -FilePath $env:GITHUB_ENV -Append
@@ -572,6 +576,7 @@ jobs:
           if ($env:ABU_OFFICIAL_BUILD -eq "true") {
             $builderArgs += @(
               "--config.extraMetadata.abuRelease.officialBuild=true",
+              "--config.extraMetadata.abuRelease.distribution=upstream-official",
               "--config.publish.provider=generic",
               "--config.publish.url=$env:ABU_ELECTRON_FEED"
             )

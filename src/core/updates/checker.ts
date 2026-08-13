@@ -3,6 +3,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { publish } from '@/core/notice/bus';
 import { getLocale } from '@/i18n';
+import { ABU_DISTRIBUTION } from '@/utils/version';
 import type { UpdateDownloadProgress, UpdateInfo } from './types';
 
 export type { UpdateDownloadProgress, UpdateInfo } from './types';
@@ -85,6 +86,12 @@ async function enrichReleaseNotes(rawNotes: string): Promise<{ notes: string; ur
 export async function checkForUpdate(force = false): Promise<UpdateInfo | null> {
   const store = useSettingsStore.getState();
 
+  if (ABU_DISTRIBUTION !== 'upstream-official') {
+    store.setUpdateInfo(null);
+    _pendingUpdate = null;
+    return null;
+  }
+
   if (!force) {
     const elapsed = Date.now() - store.lastUpdateCheck;
     if (elapsed < CHECK_INTERVAL_MS) return null;
@@ -134,6 +141,9 @@ export async function checkForUpdate(force = false): Promise<UpdateInfo | null> 
 }
 
 export async function downloadAndInstallUpdate(): Promise<void> {
+  if (ABU_DISTRIBUTION !== 'upstream-official') {
+    throw new Error(`Updater disabled for distribution: ${ABU_DISTRIBUTION}`);
+  }
   if (!_pendingUpdate) throw new Error('No pending update');
 
   const store = useSettingsStore.getState();

@@ -33,4 +33,23 @@ function isOfficialBuild(app, options) {
   return readReleaseMetadata(app, options)?.officialBuild === true;
 }
 
-module.exports = { readReleaseMetadata, isOfficialBuild, isTauriTransitionBuild };
+function getDistribution(app, options) {
+  const distribution = readReleaseMetadata(app, options)?.distribution;
+  return distribution === 'upstream-official' ||
+    distribution === 'abu-project-management' ||
+    distribution === 'source'
+    ? distribution
+    : 'source';
+}
+
+function canUseUpstreamUpdater(app, options) {
+  return isOfficialBuild(app, options) && getDistribution(app, options) === 'upstream-official';
+}
+
+module.exports = {
+  canUseUpstreamUpdater,
+  getDistribution,
+  readReleaseMetadata,
+  isOfficialBuild,
+  isTauriTransitionBuild,
+};

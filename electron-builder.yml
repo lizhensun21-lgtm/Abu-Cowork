@@ -10,6 +10,10 @@ productName: Abu
 copyright: Copyright © 2026 Abu
 extraMetadata:
   abuRelease:
+    # This fork is the Project Management edition by default. Official upstream
+    # CI must override the distribution and officialBuild marker together.
+    distribution: abu-project-management
+    upstreamBaseVersion: 0.34.2
     # Source/fork builds are never allowed to inherit Abu's production updater.
     # Official release CI overrides this exact boolean together with `publish`.
     officialBuild: false

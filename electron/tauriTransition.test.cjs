@@ -15,6 +15,8 @@ const {
   isValidValue,
 } = require('./tauriLocalStorageMigration.cjs');
 const {
+  canUseUpstreamUpdater,
+  getDistribution,
   isOfficialBuild,
   isTauriTransitionBuild,
   readReleaseMetadata,
@@ -42,6 +44,40 @@ test('migration is armed only by packaged boolean metadata', () => {
   assert.equal(isTauriTransitionBuild(current, { readFileSync }), false);
   current = { ...manifest(true), isPackaged: false };
   assert.equal(readReleaseMetadata(current, { readFileSync }), null);
+});
+
+test('upstream updater requires both official marker and upstream distribution', () => {
+  const app = { isPackaged: true, getAppPath: () => '/unused' };
+  const manifest = (abuRelease) => ({
+    readFileSync: () => JSON.stringify({ abuRelease }),
+  });
+
+  assert.equal(
+    getDistribution(app, manifest({ distribution: 'abu-project-management' })),
+    'abu-project-management'
+  );
+  assert.equal(
+    canUseUpstreamUpdater(
+      app,
+      manifest({ officialBuild: true, distribution: 'upstream-official' })
+    ),
+    true
+  );
+  assert.equal(
+    canUseUpstreamUpdater(
+      app,
+      manifest({ officialBuild: true, distribution: 'abu-project-management' })
+    ),
+    false
+  );
+  assert.equal(
+    canUseUpstreamUpdater(
+      app,
+      manifest({ officialBuild: false, distribution: 'upstream-official' })
+    ),
+    false
+  );
+  assert.equal(canUseUpstreamUpdater(app, manifest({ officialBuild: true })), false);
 });
 
 test('release version helper rejects equal and older transition versions', async () => {

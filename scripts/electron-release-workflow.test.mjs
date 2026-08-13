@@ -588,6 +588,11 @@ test('packaged feeds are architecture-isolated', () => {
   );
   assert.equal(builderConfig.publish, null);
   assert.equal(builderConfig.extraMetadata.abuRelease.officialBuild, false);
+  assert.equal(
+    builderConfig.extraMetadata.abuRelease.distribution,
+    'abu-project-management'
+  );
+  assert.equal(builderConfig.extraMetadata.abuRelease.upstreamBaseVersion, '0.34.2');
   assert.doesNotMatch(builder, /abu-agent\.oss-cn-beijing\.aliyuncs\.com/);
   assert.match(buildWorkflow, /electron\/\$\{FEED_CHANNEL\}\//);
   assert.match(buildWorkflow, /electron\/win-x64\//);
@@ -608,6 +613,11 @@ test('packaged feeds are architecture-isolated', () => {
     (buildWorkflow.match(/--config\.extraMetadata\.abuRelease\.officialBuild=true/g) || []).length,
     2,
     'only official CI builds may arm the production updater'
+  );
+  assert.equal(
+    (buildWorkflow.match(/--config\.extraMetadata\.abuRelease\.distribution=upstream-official/g) || []).length,
+    2,
+    'official updater identity must be injected alongside the official marker'
   );
   assert.equal(
     (buildWorkflow.match(/--config\.publish\.provider=generic/g) || []).length,
