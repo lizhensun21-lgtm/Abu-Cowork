@@ -188,6 +188,7 @@ export interface TranslationDict {
   };
 
   projectManagement: {
+    workspaceTitle: string;
     initializing: string;
     empty: string;
     initializationError: string;
@@ -205,6 +206,24 @@ export interface TranslationDict {
     statusPaused: string;
     statusClosed: string;
     statusCancelled: string;
+    projectFilters: string;
+    productCategory: string;
+    productModel: string;
+    allCategories: string;
+    allModels: string;
+    allStatuses: string;
+    filterUnavailable: string;
+    today: string;
+    timelineZoom: string;
+    zoomOut: string;
+    zoomIn: string;
+    zoomUnavailable: string;
+    timelineDensity: string;
+    panelSettings: string;
+    controlsUnavailable: string;
+    timelineScale: string;
+    annualView: string;
+    scaleUnavailable: string;
   };
 
   projectManagementPortal: {

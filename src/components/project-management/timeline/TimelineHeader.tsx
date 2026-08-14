@@ -1,25 +1,58 @@
 import type { TimelineHeaderSegment, TimelineHeaderTick } from './header';
-import { TIMELINE_HEADER_HEIGHT } from './rowLayout';
 
-export function TimelineHeader({ canvasWidth, months, ticks, todayX }: {
+export function TimelineHeader({
+  canvasWidth,
+  months,
+  ticks,
+  highlightedMonth,
+  todayX,
+  todayLabel,
+}: {
   canvasWidth: number;
   months: readonly TimelineHeaderSegment[];
   ticks: readonly TimelineHeaderTick[];
+  highlightedMonth: TimelineHeaderSegment | null;
   todayX: number | null;
+  todayLabel: string;
 }) {
   return (
-    <div data-testid="timeline-header" className="sticky top-0 z-20 border-b border-[var(--abu-border)] bg-[var(--abu-bg-canvas)]" style={{ width: canvasWidth, height: TIMELINE_HEADER_HEIGHT }}>
-      {months.map((month) => (
-        <div key={month.key} data-testid={`timeline-month-${month.key}`} className="absolute top-0 h-6 border-l border-[var(--abu-border-subtle)] px-2 text-center text-minor font-semibold leading-6 tracking-tight text-[var(--abu-text-secondary)]" style={{ left: month.left, width: month.width }}>
-          {month.label}
-        </div>
-      ))}
-      {ticks.map((tick) => (
-        <span key={tick.key} className="absolute top-6 h-6 -translate-x-1/2 px-1 text-caption leading-6 tabular-nums text-[var(--abu-text-muted)]" style={{ left: tick.left }}>
-          {tick.label}
-        </span>
-      ))}
-      {todayX !== null ? <span data-testid="timeline-today-line-header" aria-hidden="true" className="absolute inset-y-0 z-10 w-px bg-[var(--abu-clay-50)]" style={{ left: todayX }} /> : null}
+    <div data-testid="timeline-header" className="timeline-ruler">
+      <div className="timeline-ruler-track" style={{ width: canvasWidth }}>
+        {todayX !== null ? (
+          <span
+            data-testid="timeline-today-line-header"
+            className="timeline-today-guide timeline-today-guide--header"
+            style={{ left: todayX }}
+            aria-hidden="true"
+          />
+        ) : null}
+        {highlightedMonth ? (
+          <span
+            data-testid="timeline-current-month-highlight-header"
+            className="timeline-meeting-month-highlight timeline-meeting-month-highlight--header"
+            style={{ left: highlightedMonth.left, width: highlightedMonth.width }}
+            aria-hidden="true"
+          />
+        ) : null}
+        {months.map((month) => (
+          <span
+            key={month.key}
+            data-testid={`timeline-month-${month.key}`}
+            className="timeline-header__month"
+            style={{ left: month.left + month.width / 2, width: month.width }}
+          >
+            <span>{month.label}</span>
+          </span>
+        ))}
+        {ticks.map((tick) => (
+          <span key={tick.key} className="timeline-header__tick" style={{ left: tick.left }}>
+            {tick.label}
+          </span>
+        ))}
+        {todayX !== null ? (
+          <span className="today-pill" style={{ left: todayX }}>{todayLabel}</span>
+        ) : null}
+      </div>
     </div>
   );
 }

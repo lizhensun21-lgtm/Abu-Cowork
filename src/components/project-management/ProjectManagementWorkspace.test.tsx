@@ -50,7 +50,7 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
   it('requests runtime initialization when mounted', () => {
     render(<ProjectManagementWorkspace />);
     expect(runtime.initialize).toHaveBeenCalledOnce();
-    expect(screen.getByRole('status')).toHaveTextContent('Initializing project management…');
+    expect(screen.getByRole('status')).toHaveTextContent('Initializing project overview…');
   });
 
   it('remains safe when StrictMode repeats the mount effect', () => {
@@ -98,14 +98,13 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     };
     render(<ProjectManagementWorkspace />);
 
-    const row = screen.getByTestId('project-list-row-project-1');
-    expect(row).toHaveTextContent('PM-001');
+    const row = screen.getByTestId('project-list-row-timeline-1');
     expect(row).toHaveTextContent('Apollo');
-    expect(row).toHaveTextContent('Alex Chen');
-    expect(row).toHaveTextContent('1 / 1 completed');
+    expect(screen.getByTestId('project-manager-project-1')).toHaveAttribute('title', 'Alex Chen');
+    expect(screen.getByRole('img', { name: '1 / 1 milestones completed' })).toBeInTheDocument();
     expect(screen.getByTestId('project-timeline-workspace')).toBeInTheDocument();
     expect(screen.getByTestId('timeline-bar-timeline-1')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /create|edit|delete/i })).not.toBeInTheDocument();
   });
 
   it('renders missing optional Project values as an em dash without an owner fallback', () => {
@@ -127,11 +126,10 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     };
     render(<ProjectManagementWorkspace />);
 
-    const row = screen.getByTestId('project-list-row-project-1');
+    const row = screen.getByTestId('project-list-row-timeline-1');
     expect(row).not.toHaveTextContent('Legacy Lead');
-    expect(screen.getByTestId('project-code-project-1')).toHaveTextContent('—');
-    expect(screen.getByTestId('project-manager-project-1')).toHaveTextContent('—');
-    expect(screen.getByTestId('project-milestones-project-1')).toHaveTextContent('—');
+    expect(screen.getByTestId('project-manager-project-1')).toHaveAttribute('title', '—');
+    expect(screen.getByRole('img', { name: 'No milestone data' })).toBeInTheDocument();
   });
 
   it('renders initialization failure instead of the ready empty state', () => {
@@ -143,7 +141,7 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     render(<ProjectManagementWorkspace />);
 
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Project management could not be initialized.',
+      'Project overview could not be initialized.',
     );
     expect(screen.getByText('Repository load failed')).toBeInTheDocument();
     expect(screen.queryByText('No projects yet')).not.toBeInTheDocument();

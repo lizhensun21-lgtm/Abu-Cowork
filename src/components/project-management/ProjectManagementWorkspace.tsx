@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { FolderKanban, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { useEffect } from 'react';
+import { LoaderCircle, TriangleAlert } from 'lucide-react';
 
 import { useI18n } from '@/i18n';
 import {
@@ -15,7 +15,6 @@ export default function ProjectManagementWorkspace() {
   );
   const projectGraph = useProjectManagementStore((state) => state.graph);
   const initializationError = useProjectManagementStore((state) => state.error);
-  const projectCount = useMemo(() => projectGraph.projects.length, [projectGraph]);
 
   useEffect(() => {
     void initializeProjectManagement().catch(() => {
@@ -36,23 +35,8 @@ export default function ProjectManagementWorkspace() {
     <section
       data-project-management-workspace
       className="flex h-full min-h-0 flex-col bg-[var(--abu-bg-base)]"
-      aria-labelledby="project-management-title"
+      aria-label={t.projectManagementPortal.overview}
     >
-      <header className="flex shrink-0 items-center gap-3 px-6 py-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--abu-border)] bg-[var(--abu-bg-canvas)] text-[var(--abu-clay)]">
-          <FolderKanban className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
-        </div>
-        <div>
-          <h1 id="project-management-title" className="text-title font-semibold text-[var(--abu-text-primary)]">
-            {t.projectManagementPortal.overview}
-          </h1>
-          {initializationStatus === 'ready' && projectCount > 0 ? (
-            <p className="text-minor text-[var(--abu-text-muted)]">
-              {t.projectManagement.projectCount.replace('{count}', String(projectCount))}
-            </p>
-          ) : null}
-        </div>
-      </header>
       {isInitializing ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="flex items-center gap-2 text-body text-[var(--abu-text-muted)]" role="status">
@@ -81,14 +65,8 @@ export default function ProjectManagementWorkspace() {
             </button>
           </div>
         </div>
-      ) : projectCount === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-8 pb-8 text-center">
-          <p className="text-body text-[var(--abu-text-muted)]">
-            {t.projectManagement.empty}
-          </p>
-        </div>
       ) : (
-        <div className="min-h-0 flex-1 px-6 pb-6">
+        <div className="min-h-0 flex-1">
           <TimelineRenderer graph={projectGraph} />
         </div>
       )}
