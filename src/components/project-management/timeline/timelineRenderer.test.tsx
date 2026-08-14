@@ -618,6 +618,98 @@ describe('read-only Project Overview timeline', () => {
     expect(graph).toEqual(before);
   });
 
+  it('centers a closed 10x13 diamond and its label on the real Project Bar', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const marker = document.querySelector<HTMLElement>('[data-milestone-id="gate"]')!;
+    const diamond = marker.querySelector<SVGElement>('.milestone-node__diamond')!;
+    const shape = marker.querySelector<SVGPolygonElement>('.milestone-diamond__shape')!;
+    const css = readFileSync(resolve('src/components/project-management/projectOverview.css'), 'utf8');
+
+    expect(marker.parentElement).toHaveClass('timeline-lane');
+    expect(css).toMatch(/\.milestone-node\s*\{[\s\S]*?top:\s*var\(--timeline-row-center-y\)/);
+    expect(css).toMatch(/\.timeline-lane__bar\s*\{[\s\S]*?top:\s*calc\(var\(--timeline-row-center-y\) - 11px\)/);
+    expect(diamond).toHaveAttribute('viewBox', '0 0 10 13');
+    expect(shape).toHaveAttribute('points', '5,0.5 9.5,6.5 5,12.5 0.5,6.5');
+    expect(marker.querySelector('.milestone-node__label')).toHaveTextContent('G1 Gate');
+  });
+
+  it('renders same-row near milestones as one status-consistent cluster with +N', () => {
+    const graph = graphFixture();
+    graph.milestones = [
+      { ...graph.milestones[0], id: 'gate-a', date: '2026-04-01', status: 'at_risk' },
+      { ...graph.milestones[0], id: 'gate-b', date: '2026-04-05', status: 'blocked' },
+      { ...graph.milestones[0], id: 'gate-c', date: '2026-04-09', status: 'paused' },
+    ];
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+
+    const primary = document.querySelector<HTMLElement>('[data-milestone-id="gate-a"]')!;
+    const second = document.querySelector<HTMLElement>('[data-milestone-id="gate-b"]')!;
+    const third = document.querySelector<HTMLElement>('[data-milestone-id="gate-c"]')!;
+    expect(primary).toHaveAttribute('data-milestone-cluster-size', '3');
+    expect(primary).toHaveAttribute('data-cluster-primary', 'true');
+    expect(primary).toHaveAttribute('data-milestone-visual-status', 'current_focus');
+    expect(primary.querySelectorAll('.milestone-node__cluster-background')).toHaveLength(2);
+    expect(primary.querySelector('.milestone-node__cluster-count')).toHaveTextContent('+2');
+    expect(second).toHaveAttribute('aria-hidden', 'true');
+    expect(third).toHaveAttribute('aria-hidden', 'true');
+    expect(second.querySelector('.milestone-node__marker-hit')).not.toBeInTheDocument();
+  });
+
+  it('recomputes cluster membership from screen distance when zoom changes', () => {
+    const graph = graphFixture();
+    graph.milestones = [
+      { ...graph.milestones[0], id: 'near-a', date: '2026-04-01' },
+      { ...graph.milestones[0], id: 'near-b', date: '2026-04-05' },
+    ];
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    expect(document.querySelector('[data-milestone-id="near-a"]'))
+      .toHaveAttribute('data-milestone-cluster-size', '2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in timeline' }));
+
+    expect(document.querySelector('[data-milestone-id="near-a"]'))
+      .toHaveAttribute('data-milestone-cluster-size', '1');
+    expect(document.querySelector('[data-milestone-id="near-b"]'))
+      .toHaveAttribute('data-milestone-cluster-size', '1');
+  });
+
+  it.each([
+    ['not_started', 'not_started'],
+    ['at_risk', 'current_focus'],
+    ['completed', 'completed'],
+    ['delayed', 'delayed'],
+    ['blocked', 'blocked'],
+    ['paused', 'paused'],
+  ] as const)('presents %s through the shared %s status', (status, visualStatus) => {
+    const graph = graphFixture();
+    graph.milestones[0] = { ...graph.milestones[0], status };
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    expect(document.querySelector('[data-milestone-id="gate"]'))
+      .toHaveAttribute('data-milestone-visual-status', visualStatus);
+  });
+
+  it('blocks blank-area pan initiation from the marker hit area', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    const markerHit = document.querySelector<HTMLElement>(
+      '[data-milestone-id="gate"] .milestone-node__marker-hit',
+    )!;
+    Object.defineProperties(container, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn(() => true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+    container.scrollLeft = 200;
+    fireEvent.pointerDown(markerHit, {
+      pointerId: 12, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 300,
+    });
+    fireEvent.pointerMove(container, {
+      pointerId: 12, pointerType: 'mouse', isPrimary: true, clientX: 240,
+    });
+    expect(container.scrollLeft).toBe(200);
+    expect(container).not.toHaveClass('is-panning');
+  });
+
   it('renders one continuous Today guide in the body and none outside the range', () => {
     const { rerender } = render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
     expect(screen.getByTestId('timeline-today-line-header')).toBeInTheDocument();

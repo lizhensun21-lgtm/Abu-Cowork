@@ -37,6 +37,7 @@ import {
 import { getTimelineBarGeometry } from './barGeometry';
 import { buildTimelineHeader } from './header';
 import { TimelineHeader } from './TimelineHeader';
+import { TimelineMilestones } from './TimelineMilestones';
 import { ProjectListRow } from '../ProjectList';
 import {
   createProjectOverviewDisplayRows,
@@ -1005,21 +1006,10 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
                           title={`${row.timeline.label}: ${row.timeline.startDate} — ${row.timeline.endDate}`}
                         />
                       ) : null}
-                      {row.timeline.milestones.map((milestone) => (
-                        <span
-                          key={milestone.id}
-                          data-milestone-id={milestone.id}
-                          data-no-timeline-pan
-                          className="milestone-node"
-                          style={{ left: header.coordinates.dateToX(milestone.date) }}
-                          title={`${milestone.name} · ${milestone.date}`}
-                        >
-                          <svg className="milestone-diamond" viewBox="0 0 10 13" aria-hidden="true">
-                            <polygon points="5,0.7 9.3,6.5 5,12.3 0.7,6.5" />
-                          </svg>
-                          <span className="milestone-node__label">{milestone.name}</span>
-                        </span>
-                      ))}
+                      <TimelineMilestones
+                        milestones={row.timeline.milestones}
+                        coordinates={header.coordinates}
+                      />
                     </div>
                   );
                 })}

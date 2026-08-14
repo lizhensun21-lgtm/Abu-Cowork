@@ -17,6 +17,29 @@
   --timeline-scroll-track: rgb(17 24 39 / 0.035);
   --timeline-scroll-thumb: #a6acb4;
   --timeline-scroll-thumb-hover: #8f969f;
+  --milestone-status-not-started-fill: transparent;
+  --milestone-status-not-started-border: #aeb3bc;
+  --milestone-status-not-started-label: #62666d;
+  --milestone-status-in-progress-fill: #7c748e;
+  --milestone-status-in-progress-border: #6e667f;
+  --milestone-status-in-progress-label: #62666d;
+  --milestone-status-current-focus-fill: #e7b94c;
+  --milestone-status-current-focus-border: #c99a2e;
+  --milestone-status-current-focus-label: #4f5156;
+  --milestone-status-completed-fill: #858b95;
+  --milestone-status-completed-border: #747a83;
+  --milestone-status-completed-label: #8a8f98;
+  --milestone-status-delayed-fill: #fdebec;
+  --milestone-status-delayed-border: #d84a4f;
+  --milestone-status-delayed-label: #b83a3f;
+  --milestone-status-blocked-fill: #d64545;
+  --milestone-status-blocked-border: #b53232;
+  --milestone-status-blocked-label: #b53232;
+  --milestone-status-paused-fill: #eff0f2;
+  --milestone-status-paused-border: #a7abb2;
+  --milestone-status-paused-label: #8a8f98;
+  --milestone-cluster-layer-opacity: 0.28;
+  --milestone-cluster-rear-layer-opacity: 0.18;
   --timeline-ruler-height: 36px;
   --timeline-swimlane-height: 64px;
   --timeline-row-center-y: 32px;
@@ -810,38 +833,155 @@
 }
 
 [data-project-overview-workspace] .milestone-node {
+  --milestone-status-fill: var(--milestone-status-not-started-fill);
+  --milestone-status-stroke: var(--milestone-status-not-started-border);
+  --milestone-status-label: var(--milestone-status-not-started-label);
+  --milestone-status-opacity: 1;
+
   position: absolute;
   top: var(--timeline-row-center-y);
-  z-index: 4;
-  display: block;
-  width: 0;
-  height: 0;
-  color: #7168bf;
+  z-index: var(--milestone-cluster-z, 4);
+  isolation: isolate;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  transform: translate(calc(-50% + var(--milestone-cluster-marker-offset, 0px)), -50%);
 }
 
-[data-project-overview-workspace] .milestone-diamond {
+[data-project-overview-workspace] .milestone-node.is-clustered {
+  pointer-events: none;
+}
+
+[data-project-overview-workspace] .milestone-node__marker-hit {
   position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+[data-project-overview-workspace] .milestone-node__marker-hit::before {
+  position: absolute;
+  z-index: 0;
+  width: 10px;
+  height: 13px;
+  background: var(--timeline-workspace-bg);
+  content: '';
+  pointer-events: none;
+}
+
+[data-project-overview-workspace] .milestone-node__diamond {
+  position: relative;
+  z-index: 1;
   width: 10px;
   height: 13px;
   overflow: visible;
-  fill: #fff;
-  stroke: currentcolor;
-  stroke-width: 1.4;
-  transform: translate(-5px, -6.5px);
+  opacity: var(--milestone-status-opacity);
+}
+
+[data-project-overview-workspace] .milestone-diamond__shape {
+  fill: var(--milestone-status-fill);
+  shape-rendering: geometricPrecision;
+  stroke: var(--milestone-status-stroke);
+  stroke-linejoin: miter;
+  stroke-width: 1.15;
+  vector-effect: non-scaling-stroke;
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-marker {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 13px;
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-background,
+[data-project-overview-workspace] .milestone-node__cluster-foreground {
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 13px;
+  overflow: visible;
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-background {
+  z-index: 0;
+  opacity: var(--milestone-cluster-layer-opacity);
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-background--layer-1 {
+  left: 0;
+  z-index: 1;
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-background--layer-2 {
+  left: -2.25px;
+  z-index: 0;
+  opacity: var(--milestone-cluster-rear-layer-opacity);
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-foreground {
+  left: 2.25px;
+  z-index: 2;
+}
+
+[data-project-overview-workspace] .milestone-node[data-milestone-cluster-size='2']
+  .milestone-node__cluster-background--layer-1 {
+  left: -1.25px;
+}
+
+[data-project-overview-workspace] .milestone-node[data-milestone-cluster-size='2']
+  .milestone-node__cluster-foreground {
+  left: 1.25px;
 }
 
 [data-project-overview-workspace] .milestone-node__label {
   position: absolute;
-  top: 10px;
-  left: 0;
-  max-width: 112px;
+  top: 24px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  color: var(--milestone-status-label);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 16px;
+  opacity: var(--milestone-status-opacity);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+[data-project-overview-workspace] .milestone-node__label-text {
+  display: block;
+  min-width: 0;
   overflow: hidden;
-  color: var(--po-text-tertiary);
-  font-size: 10px;
-  line-height: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transform: translateX(-50%);
+}
+
+[data-project-overview-workspace] .milestone-node__label.is-cluster-hidden {
+  visibility: hidden;
+}
+
+[data-project-overview-workspace] .milestone-node__cluster-count {
+  flex: 0 0 auto;
+  margin-left: 3px;
+  color: currentcolor;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 16px;
 }
 
 [data-project-overview-workspace] .timeline-bottom-bar {
