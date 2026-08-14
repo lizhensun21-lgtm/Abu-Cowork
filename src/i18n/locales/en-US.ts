@@ -180,6 +180,20 @@ const enUS: TranslationDict = {
     statusCancelled: 'Cancelled',
   },
 
+  projectManagementPortal: {
+    moduleName: 'Project Management',
+    overview: 'Project Overview',
+    meetings: 'Meetings',
+    calendar: 'Calendar',
+    ledger: 'Ledger',
+    resources: 'Resources',
+    members: 'Members',
+    backToAbu: 'Back to Abu',
+    notAvailable: 'This workspace is not available yet.',
+    openAccountSettings: 'Open account settings',
+    navigationLabel: 'Project Management navigation',
+  },
+
   todos: {
     title: 'Todos',
     newTodo: 'New Todo',

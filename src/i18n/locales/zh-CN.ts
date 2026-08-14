@@ -180,6 +180,20 @@ const zhCN: TranslationDict = {
     statusCancelled: '已取消',
   },
 
+  projectManagementPortal: {
+    moduleName: '项目管理',
+    overview: '项目总览',
+    meetings: '会议',
+    calendar: '日历',
+    ledger: '台账',
+    resources: '资源',
+    members: '成员',
+    backToAbu: '返回 Abu',
+    notAvailable: '此工作区尚未开放。',
+    openAccountSettings: '打开账户设置',
+    navigationLabel: '项目管理导航',
+  },
+
   todos: {
     title: '待办',
     newTodo: '新建待办',

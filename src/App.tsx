@@ -13,7 +13,7 @@ import CapabilitySetupDialog from '@/components/settings/CapabilitySetupDialog';
 import ToolboxView from '@/components/settings/ToolboxModal';
 import TodoView from '@/components/todos/TodoView';
 import InboxView from '@/components/inbox/InboxView';
-import ProjectManagementWorkspace from '@/components/project-management/ProjectManagementWorkspace';
+import ProjectManagementPortal from '@/components/project-management/portal/ProjectManagementPortal';
 import { useLabsFlag, resolveLabsFlag } from '@/core/labs/resolve';
 import { LABS_TODOS_INBOX, LABS_PET } from '@/core/labs/registry';
 import { resolvePetBootAction } from '@/core/pet/petBoot';
@@ -141,6 +141,7 @@ function App() {
   const toggleRightPanel = useSettingsStore((s) => s.toggleRightPanel);
   const viewMode = useSettingsStore((s) => s.viewMode);
   const setViewMode = useSettingsStore((s) => s.setViewMode);
+  const projectManagementPortalActive = viewMode === 'project-management';
   const startNewConversation = useChatStore((s) => s.startNewConversation);
   const setFileTreeMode = usePreviewStore((s) => s.setFileTreeMode);
   // Preview split (TRAE-style): when the workspace panel has WIDE content
@@ -677,11 +678,14 @@ function App() {
     platform: desktopPlatform,
     windowsTitleBarOverlay: desktopPlatform === 'windows' && hasElectronCommandHost(),
     sidebarCollapsed,
-    showSearch: viewMode !== 'settings',
-    showNewTask: sidebarCollapsed && viewMode !== 'settings',
-    showRightPanelToggle,
+    showSidebarToggle: !projectManagementPortalActive,
+    showProjectManagementPortal: !projectManagementPortalActive,
+    showSearch: !projectManagementPortalActive && viewMode !== 'settings',
+    showNewTask: !projectManagementPortalActive && sidebarCollapsed && viewMode !== 'settings',
+    showRightPanelToggle: !projectManagementPortalActive && showRightPanelToggle,
     rightPanelCollapsed,
     onToggleSidebar: toggleSidebar,
+    onOpenProjectManagementPortal: () => setViewMode('project-management'),
     onOpenSearch: () => setSearchModalOpen(true),
     onNewTask: () => {
       startNewConversation();
@@ -700,6 +704,7 @@ function App() {
       helpMenu: t.sidebar.helpMenu,
       showSidebar: t.sidebar.showSidebar,
       hideSidebar: t.sidebar.hideSidebar,
+      projectManagement: t.projectManagementPortal.moduleName,
       search: t.sidebar.searchPlaceholder,
       newTask: t.sidebar.newTask,
       showPanel: t.panel.showPanel,
@@ -720,49 +725,54 @@ function App() {
           data-abu-app-layout
           className="flex min-h-0 w-full flex-1 overflow-hidden bg-[var(--abu-bg-canvas)]"
         >
-          {/* Sidebar - width changes are always instant (no slide animation). */}
-          <div
-            className="flex shrink-0 flex-col overflow-hidden"
-            style={{
-              width: sidebarCollapsed ? 0 : 260,
-            }}
-          >
-            <div className="min-h-0 flex-1">
-              <Sidebar />
-            </div>
-          </div>
-
-          <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Only the exposed canvas gutters are draggable. The raised cards
-                explicitly carve out stable no-drag interaction surfaces. */}
-            <div
-              data-abu-panel-container
-              data-tauri-drag-region={mac ? '' : undefined}
-              className="flex min-h-0 flex-1"
-            >
-              <main
-                data-electron-no-drag
-                className={cn(
-                  'relative bg-[var(--abu-bg-base)]',
-                  'mt-2 mb-2 ml-2 rounded-[var(--abu-radius-panel)] border border-[var(--abu-border)] shadow-[var(--abu-shadow-card)] overflow-hidden',
-                  previewSplit ? 'shrink-0' : 'flex-1 min-w-0',
-                  // Right panel beside chat (preview OR summary): tighter 4px gutter; otherwise 8px to the window edge.
-                  rightPanelBeside ? 'mr-1' : 'mr-2',
-                )}
-                style={previewSplit ? { width: previewChatWidth } : undefined}
+          {projectManagementPortalActive ? (
+            <ProjectManagementPortal />
+          ) : (
+            <>
+              {/* Sidebar - width changes are always instant (no slide animation). */}
+              <div
+                className="flex shrink-0 flex-col overflow-hidden"
+                style={{
+                  width: sidebarCollapsed ? 0 : 260,
+                }}
               >
-                {viewMode === 'automation' && <AutomationView />}
-                {viewMode === 'toolbox' && <ToolboxView />}
-                {viewMode === 'todos' && <TodoView />}
-                {viewMode === 'inbox' && <InboxView />}
-                {viewMode === 'project-management' && <ProjectManagementWorkspace />}
-                {(viewMode === 'chat' || !viewMode) && <ChatView />}
-              </main>
+                <div className="min-h-0 flex-1">
+                  <Sidebar />
+                </div>
+              </div>
 
-              {/* Right panel */}
-              <RightPanel />
-            </div>
-          </div>
+              <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+                {/* Only the exposed canvas gutters are draggable. The raised cards
+                    explicitly carve out stable no-drag interaction surfaces. */}
+                <div
+                  data-abu-panel-container
+                  data-tauri-drag-region={mac ? '' : undefined}
+                  className="flex min-h-0 flex-1"
+                >
+                  <main
+                    data-electron-no-drag
+                    className={cn(
+                      'relative bg-[var(--abu-bg-base)]',
+                      'mt-2 mb-2 ml-2 rounded-[var(--abu-radius-panel)] border border-[var(--abu-border)] shadow-[var(--abu-shadow-card)] overflow-hidden',
+                      previewSplit ? 'shrink-0' : 'flex-1 min-w-0',
+                      // Right panel beside chat (preview OR summary): tighter 4px gutter; otherwise 8px to the window edge.
+                      rightPanelBeside ? 'mr-1' : 'mr-2',
+                    )}
+                    style={previewSplit ? { width: previewChatWidth } : undefined}
+                  >
+                    {viewMode === 'automation' && <AutomationView />}
+                    {viewMode === 'toolbox' && <ToolboxView />}
+                    {viewMode === 'todos' && <TodoView />}
+                    {viewMode === 'inbox' && <InboxView />}
+                    {(viewMode === 'chat' || !viewMode) && <ChatView />}
+                  </main>
+
+                  {/* Right panel */}
+                  <RightPanel />
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <ToastContainer />

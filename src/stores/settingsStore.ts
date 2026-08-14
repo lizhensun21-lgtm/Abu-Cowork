@@ -559,7 +559,7 @@ export const useSettingsStore = create<SettingsStore>()(
       activeToolboxTab: 'skills' as ToolboxTab,
       toolboxSearchQuery: '',
       installingItem: null,
-      viewMode: 'chat' as ViewMode,
+      viewMode: 'project-management' as ViewMode,
       systemSettingsOpen: false,
       capabilitySetupTarget: null,
       disabledSkills: [
@@ -1834,7 +1834,7 @@ export const useSettingsStore = create<SettingsStore>()(
         state.activeToolboxTab = 'skills';
         state.toolboxSearchQuery = '';
         state.installingItem = null;
-        state.viewMode = 'chat';
+        state.viewMode = 'project-management';
         state.updateDownloadProgress = null;
         state.updateInstalling = false;
         // Main owns the runtime gate. Restore it only from persisted user

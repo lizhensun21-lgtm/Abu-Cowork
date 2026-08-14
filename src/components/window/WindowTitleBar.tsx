@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { PanelLeft, PanelRight, Plus, Search } from 'lucide-react';
+import { FolderKanban, PanelLeft, PanelRight, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import abuAvatar from '@/assets/abu-avatar.png';
 
@@ -9,11 +9,14 @@ interface WindowTitleBarProps {
   platform: string;
   windowsTitleBarOverlay: boolean;
   sidebarCollapsed: boolean;
+  showSidebarToggle: boolean;
+  showProjectManagementPortal: boolean;
   showSearch: boolean;
   showNewTask: boolean;
   showRightPanelToggle: boolean;
   rightPanelCollapsed: boolean;
   onToggleSidebar: () => void;
+  onOpenProjectManagementPortal: () => void;
   onOpenSearch: () => void;
   onNewTask: () => void;
   onToggleRightPanel: () => void;
@@ -28,6 +31,7 @@ interface WindowTitleBarProps {
     helpMenu: string;
     showSidebar: string;
     hideSidebar: string;
+    projectManagement: string;
     search: string;
     newTask: string;
     showPanel: string;
@@ -50,11 +54,14 @@ export default function WindowTitleBar({
   platform,
   windowsTitleBarOverlay,
   sidebarCollapsed,
+  showSidebarToggle,
+  showProjectManagementPortal,
   showSearch,
   showNewTask,
   showRightPanelToggle,
   rightPanelCollapsed,
   onToggleSidebar,
+  onOpenProjectManagementPortal,
   onOpenSearch,
   onNewTask,
   onToggleRightPanel,
@@ -99,18 +106,35 @@ export default function WindowTitleBar({
           data-abu-macos-titlebar
           className="pointer-events-none fixed inset-x-0 top-0 z-40 h-11 select-none"
         >
-          <button
-            type="button"
-            data-electron-no-drag
-            data-window-control="sidebar"
-            onClick={onToggleSidebar}
-            className={cn(CONTROL_CLASS, 'absolute transition-[left] duration-200')}
-            style={{ top, left: sidebarCollapsed ? 96 : 200 }}
-            title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-            aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-          >
-            <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
-          </button>
+          {showSidebarToggle && (
+            <button
+              type="button"
+              data-electron-no-drag
+              data-window-control="sidebar"
+              onClick={onToggleSidebar}
+              className={cn(CONTROL_CLASS, 'absolute transition-[left] duration-200')}
+              style={{ top, left: sidebarCollapsed ? 96 : 200 }}
+              title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+              aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+            >
+              <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
+            </button>
+          )}
+
+          {showProjectManagementPortal && (
+            <button
+              type="button"
+              data-electron-no-drag
+              data-window-control="project-management"
+              onClick={onOpenProjectManagementPortal}
+              className={cn(CONTROL_CLASS, 'absolute transition-[left] duration-200')}
+              style={{ top, left: sidebarCollapsed ? 186 : 260 }}
+              title={labels.projectManagement}
+              aria-label={labels.projectManagement}
+            >
+              <FolderKanban className="h-3.5 w-[18px]" strokeWidth={1.5} />
+            </button>
+          )}
 
           {showSearch && (
             <button
@@ -167,17 +191,32 @@ export default function WindowTitleBar({
       data-electron-no-drag
       className="flex h-full shrink-0 items-center gap-1"
     >
-      <button
-        type="button"
-        data-electron-no-drag
-        data-window-control="sidebar"
-        onClick={onToggleSidebar}
-        className={CONTROL_CLASS}
-        title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-        aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-      >
-        <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
-      </button>
+      {showSidebarToggle && (
+        <button
+          type="button"
+          data-electron-no-drag
+          data-window-control="sidebar"
+          onClick={onToggleSidebar}
+          className={CONTROL_CLASS}
+          title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+          aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+        >
+          <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
+        </button>
+      )}
+      {showProjectManagementPortal && (
+        <button
+          type="button"
+          data-electron-no-drag
+          data-window-control="project-management"
+          onClick={onOpenProjectManagementPortal}
+          className={CONTROL_CLASS}
+          title={labels.projectManagement}
+          aria-label={labels.projectManagement}
+        >
+          <FolderKanban className="h-3.5 w-[18px]" strokeWidth={1.5} />
+        </button>
+      )}
       {showSearch && (
         <button
           type="button"
@@ -313,17 +352,33 @@ export default function WindowTitleBar({
 
   return (
     <>
-      <button
-        type="button"
-        data-electron-no-drag
-        data-window-control="sidebar"
-        onClick={onToggleSidebar}
-        className={cn(CONTROL_CLASS, 'fixed left-2 top-1.5 z-50')}
-        title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-        aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
-      >
-        <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
-      </button>
+      {showSidebarToggle && (
+        <button
+          type="button"
+          data-electron-no-drag
+          data-window-control="sidebar"
+          onClick={onToggleSidebar}
+          className={cn(CONTROL_CLASS, 'fixed left-2 top-1.5 z-50')}
+          title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+          aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+        >
+          <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
+        </button>
+      )}
+
+      {showProjectManagementPortal && (
+        <button
+          type="button"
+          data-electron-no-drag
+          data-window-control="project-management"
+          onClick={onOpenProjectManagementPortal}
+          className={cn(CONTROL_CLASS, 'fixed left-[72px] top-1.5 z-50')}
+          title={labels.projectManagement}
+          aria-label={labels.projectManagement}
+        >
+          <FolderKanban className="h-3.5 w-[18px]" strokeWidth={1.5} />
+        </button>
+      )}
 
       {showSearch && (
         <button
@@ -345,7 +400,7 @@ export default function WindowTitleBar({
           data-electron-no-drag
           data-window-control="new-task"
           onClick={onNewTask}
-          className={cn(CONTROL_CLASS, 'fixed left-[72px] top-1.5 z-50')}
+          className={cn(CONTROL_CLASS, 'fixed left-[104px] top-1.5 z-50')}
           title={labels.newTask}
           aria-label={labels.newTask}
         >

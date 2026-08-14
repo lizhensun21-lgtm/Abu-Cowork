@@ -7,7 +7,7 @@ import { useInboxStore } from '@/stores/inboxStore';
 import { useI18n } from '@/i18n';
 import { useLabsFlag } from '@/core/labs/resolve';
 import { LABS_TODOS_INBOX } from '@/core/labs/registry';
-import { Plus, FolderKanban, Workflow, Wrench, Trash2, Download, Pencil, Undo2, FolderInput, FolderClosed, ChevronRight, Minus, CheckSquare, Inbox, ListTree, ArrowLeft } from 'lucide-react';
+import { Plus, Workflow, Wrench, Trash2, Download, Pencil, Undo2, FolderInput, FolderClosed, ChevronRight, Minus, CheckSquare, Inbox, ListTree, ArrowLeft } from 'lucide-react';
 import GuideModal from '@/components/common/GuideModal';
 import ProfileEditModal from '@/components/common/ProfileEditModal';
 import AccountMenu from '@/components/sidebar/AccountMenu';
@@ -331,18 +331,6 @@ export default function Sidebar() {
             </button>
           </>
         )}
-        <button
-          onClick={() => { setViewMode('project-management'); setShowFileTree(false); }}
-          className={cn(
-            'btn-ghost flex items-center gap-3 w-full px-3 py-2.5 text-body rounded-lg',
-            viewMode === 'project-management'
-              ? 'bg-[var(--abu-bg-hover)] text-[var(--abu-text-primary)]'
-              : 'text-[var(--abu-text-secondary)] hover:bg-[var(--abu-bg-hover)]'
-          )}
-        >
-          <FolderKanban className={cn('h-[18px] w-[18px]', viewMode === 'project-management' ? 'text-[var(--abu-clay)]' : 'text-[var(--abu-text-tertiary)]')} strokeWidth={1.75} />
-          <span>{t.sidebar.projectManagement}</span>
-        </button>
         <button
           onClick={() => { openToolbox(); setShowFileTree(false); }}
           className={cn(

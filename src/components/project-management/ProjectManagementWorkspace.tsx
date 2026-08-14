@@ -44,7 +44,7 @@ export default function ProjectManagementWorkspace() {
         </div>
         <div>
           <h1 id="project-management-title" className="text-title font-semibold text-[var(--abu-text-primary)]">
-            {t.sidebar.projectManagement}
+            {t.projectManagementPortal.overview}
           </h1>
           {initializationStatus === 'ready' && projectCount > 0 ? (
             <p className="text-minor text-[var(--abu-text-muted)]">

@@ -8,11 +8,14 @@ function props(overrides: Record<string, unknown> = {}) {
     platform: 'windows',
     windowsTitleBarOverlay: true,
     sidebarCollapsed: true,
+    showSidebarToggle: true,
+    showProjectManagementPortal: true,
     showSearch: true,
     showNewTask: true,
     showRightPanelToggle: true,
     rightPanelCollapsed: true,
     onToggleSidebar: vi.fn(),
+    onOpenProjectManagementPortal: vi.fn(),
     onOpenSearch: vi.fn(),
     onNewTask: vi.fn(),
     onToggleRightPanel: vi.fn(),
@@ -24,6 +27,7 @@ function props(overrides: Record<string, unknown> = {}) {
       helpMenu: 'Help',
       showSidebar: 'Show sidebar',
       hideSidebar: 'Hide sidebar',
+      projectManagement: 'Project Management',
       search: 'Search',
       newTask: 'New task',
       showPanel: 'Show panel',
@@ -59,17 +63,19 @@ describe('WindowTitleBar', () => {
       expect(menu).toHaveAttribute('data-electron-no-drag');
       expect(menu).toHaveAttribute('aria-haspopup', 'menu');
     });
-    expect(controls).toHaveLength(4);
+    expect(controls).toHaveLength(5);
     controls.forEach((control) => {
       expect(control).toHaveAttribute('data-electron-no-drag');
     });
 
     await user.click(screen.getByRole('button', { name: 'Show sidebar' }));
+    await user.click(screen.getByRole('button', { name: 'Project Management' }));
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.click(screen.getByRole('button', { name: 'New task' }));
     await user.click(screen.getByRole('button', { name: 'Show panel' }));
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(callbacks.onToggleSidebar).toHaveBeenCalledOnce();
+    expect(callbacks.onOpenProjectManagementPortal).toHaveBeenCalledOnce();
     expect(callbacks.onOpenSearch).toHaveBeenCalledOnce();
     expect(callbacks.onNewTask).toHaveBeenCalledOnce();
     expect(callbacks.onToggleRightPanel).toHaveBeenCalledOnce();
@@ -132,7 +138,7 @@ describe('WindowTitleBar', () => {
 
     const overlay = container.querySelector('[data-abu-macos-titlebar]');
     const controls = [...container.querySelectorAll('[data-window-control]')];
-    expect(controls).toHaveLength(4);
+    expect(controls).toHaveLength(5);
     controls.forEach((control) => {
       expect(control).toHaveAttribute('data-electron-no-drag');
       expect(overlay?.contains(control)).toBe(true);
@@ -147,12 +153,30 @@ describe('WindowTitleBar', () => {
       .toHaveClass('right-4');
 
     await user.click(screen.getByRole('button', { name: 'Show sidebar' }));
+    await user.click(screen.getByRole('button', { name: 'Project Management' }));
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.click(screen.getByRole('button', { name: 'New task' }));
     await user.click(screen.getByRole('button', { name: 'Show panel' }));
     expect(callbacks.onToggleSidebar).toHaveBeenCalledOnce();
+    expect(callbacks.onOpenProjectManagementPortal).toHaveBeenCalledOnce();
     expect(callbacks.onOpenSearch).toHaveBeenCalledOnce();
     expect(callbacks.onNewTask).toHaveBeenCalledOnce();
     expect(callbacks.onToggleRightPanel).toHaveBeenCalledOnce();
+  });
+
+  it('hides Original Abu shell controls while the Project Management Portal is active', () => {
+    const { container } = render(
+      <WindowTitleBar
+        {...props({
+          showSidebarToggle: false,
+          showProjectManagementPortal: false,
+          showSearch: false,
+          showNewTask: false,
+          showRightPanelToggle: false,
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-window-control]')).toHaveLength(0);
   });
 });

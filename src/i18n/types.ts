@@ -207,6 +207,20 @@ export interface TranslationDict {
     statusCancelled: string;
   };
 
+  projectManagementPortal: {
+    moduleName: string;
+    overview: string;
+    meetings: string;
+    calendar: string;
+    ledger: string;
+    resources: string;
+    members: string;
+    backToAbu: string;
+    notAvailable: string;
+    openAccountSettings: string;
+    navigationLabel: string;
+  };
+
   // Todos
   todos: {
     title: string;
