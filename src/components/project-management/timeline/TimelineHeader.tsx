@@ -2,14 +2,14 @@ import type { TimelineHeaderSegment, TimelineHeaderTick } from './header';
 
 export function TimelineHeader({
   canvasWidth,
-  months,
+  segments,
   ticks,
   highlightedMonth,
   todayX,
   todayLabel,
 }: {
   canvasWidth: number;
-  months: readonly TimelineHeaderSegment[];
+  segments: readonly TimelineHeaderSegment[];
   ticks: readonly TimelineHeaderTick[];
   highlightedMonth: TimelineHeaderSegment | null;
   todayX: number | null;
@@ -34,14 +34,14 @@ export function TimelineHeader({
             aria-hidden="true"
           />
         ) : null}
-        {months.map((month) => (
+        {segments.map((segment) => (
           <span
-            key={month.key}
-            data-testid={`timeline-month-${month.key}`}
-            className="timeline-header__month"
-            style={{ left: month.left + month.width / 2, width: month.width }}
+            key={segment.key}
+            data-testid={`timeline-ruler-segment-${segment.key}`}
+            className="timeline-header__segment"
+            style={{ left: segment.left + segment.width / 2, width: segment.width }}
           >
-            <span>{month.label}</span>
+            <span>{segment.label}</span>
           </span>
         ))}
         {ticks.map((tick) => (

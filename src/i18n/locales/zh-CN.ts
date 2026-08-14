@@ -195,8 +195,12 @@ const zhCN: TranslationDict = {
     panelSettings: '面板设置',
     controlsUnavailable: '只读阶段暂不可用',
     timelineScale: '时间尺度',
-    annualView: '年度',
-    scaleUnavailable: '当前使用固定周视图',
+    scaleYear: '年度',
+    scaleQuarter: '季度',
+    scaleMonth: '月度',
+    scaleWeek: '周',
+    scaleDay: '日',
+    closeScaleMenu: '关闭时间尺度菜单',
   },
 
   projectManagementPortal: {

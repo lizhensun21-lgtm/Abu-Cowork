@@ -231,6 +231,55 @@
   min-width: 60px;
 }
 
+[data-project-overview-workspace] .scale-button.is-open {
+  color: var(--po-text-primary);
+  background: #f4f4f5;
+}
+
+[data-project-overview-workspace] .menu-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  border: 0;
+  background: transparent;
+}
+
+[data-project-overview-workspace] .dropdown-menu {
+  position: absolute;
+  z-index: 30;
+  top: 34px;
+  right: 0;
+  display: flex;
+  min-width: 118px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid rgb(17 24 39 / 0.09);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(17 24 39 / 0.14);
+}
+
+[data-project-overview-workspace] .dropdown-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--po-text-secondary);
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+}
+
+[data-project-overview-workspace] .dropdown-menu button:hover,
+[data-project-overview-workspace] .dropdown-menu button.is-selected {
+  color: var(--po-text-primary);
+  background: #f4f4f5;
+}
+
 [data-project-overview-workspace] .today-button:hover:not(:disabled) {
   color: var(--po-text-primary);
   border-color: #dfe2e6;
@@ -248,6 +297,8 @@
 }
 
 [data-project-overview-workspace] .today-button:focus-visible,
+[data-project-overview-workspace] .scale-button:focus-visible,
+[data-project-overview-workspace] .dropdown-menu button:focus-visible,
 [data-project-overview-workspace] .tree-toggle:focus-visible,
 [data-project-overview-workspace] [role='scrollbar']:focus-visible {
   outline: 2px solid rgb(113 104 191 / 0.25);
@@ -603,14 +654,14 @@
   background: var(--timeline-workspace-bg);
 }
 
-[data-project-overview-workspace] .timeline-header__month,
+[data-project-overview-workspace] .timeline-header__segment,
 [data-project-overview-workspace] .timeline-header__tick,
 [data-project-overview-workspace] .today-pill {
   position: absolute;
   white-space: nowrap;
 }
 
-[data-project-overview-workspace] .timeline-header__month {
+[data-project-overview-workspace] .timeline-header__segment {
   top: 2px;
   z-index: 1;
   overflow: visible;

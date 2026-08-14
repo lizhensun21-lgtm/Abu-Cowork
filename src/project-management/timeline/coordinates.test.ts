@@ -8,7 +8,7 @@ import {
 
 describe('Timeline calendar coordinates', () => {
   it('maps calendar dates to pixels at different densities', () => {
-    for (const pxPerDay of [3, 4.6, 6.2, 8.4]) {
+    for (const pxPerDay of [3, 3.8, 4.6, 6.2, 8.4]) {
       const coordinates = createTimelineCoordinates('2026-03-01', '2026-03-31', pxPerDay);
       expect(coordinates.dateToX('2026-03-11')).toBeCloseTo(10 * pxPerDay);
       expect(coordinates.xToDate(10 * pxPerDay)).toBe('2026-03-11');

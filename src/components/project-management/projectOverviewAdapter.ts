@@ -3,7 +3,6 @@ import type { ProjectGraph } from '@/project-management/domain';
 import {
   deriveTimelineRange,
   selectTimelineRows,
-  selectTimelineScale,
   type TimelineRange,
   type TimelineRow,
 } from '@/project-management/timeline';
@@ -14,8 +13,6 @@ export const PROJECT_OVERVIEW_TOOLBAR_HEIGHT = 38;
 export const PROJECT_OVERVIEW_RULER_HEIGHT = 36;
 export const PROJECT_OVERVIEW_ROW_HEIGHT = 64;
 export const PROJECT_OVERVIEW_BOTTOM_BAR_HEIGHT = 40;
-export const PROJECT_OVERVIEW_TIME_SCALE = 'week' as const;
-export const PROJECT_OVERVIEW_ZOOM_DENSITY = 'month' as const;
 
 export interface ProjectOverviewCapabilities {
   readonly canCreate: false;
@@ -44,8 +41,6 @@ export interface ProjectOverviewViewModel {
   readonly timelineRows: readonly TimelineRow[];
   readonly range: TimelineRange;
   readonly today: string;
-  readonly timeScale: typeof PROJECT_OVERVIEW_TIME_SCALE;
-  readonly pxPerDay: number;
   readonly capabilities: ProjectOverviewCapabilities;
 }
 
@@ -95,8 +90,6 @@ export function createProjectOverviewViewModel(
     timelineRows,
     range: deriveTimelineRange(timelineRows, fallbackRange(today)),
     today,
-    timeScale: PROJECT_OVERVIEW_TIME_SCALE,
-    pxPerDay: selectTimelineScale(PROJECT_OVERVIEW_ZOOM_DENSITY).pxPerDay,
     capabilities: READ_ONLY_CAPABILITIES,
   });
 }

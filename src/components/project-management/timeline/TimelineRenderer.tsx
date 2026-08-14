@@ -19,7 +19,13 @@ import {
 
 import { useI18n } from '@/i18n';
 import type { ProjectGraph } from '@/project-management/domain';
-import { selectTimelineScale, type TimelineScale } from '@/project-management/timeline';
+import {
+  DEFAULT_TIMELINE_TIME_SCALE,
+  DEFAULT_TIMELINE_ZOOM_LEVEL_INDEX,
+  TIMELINE_TIME_SCALES,
+  TIMELINE_ZOOM_DENSITIES,
+  type TimelineTimeScale,
+} from '@/project-management/timeline';
 import { getTimelineBarGeometry } from './barGeometry';
 import { buildTimelineHeader } from './header';
 import { TimelineHeader } from './TimelineHeader';
@@ -54,14 +60,6 @@ const EMPTY_SCROLLBAR: ScrollbarGeometry = Object.freeze({
 
 const TIMELINE_PAN_THRESHOLD_PX = 5;
 const TIMELINE_WHEEL_ZOOM_THROTTLE_MS = 180;
-const ZOOM_LEVELS = [
-  { scale: 'year', tickMinSpacing: 56 },
-  { scale: 'quarter', tickMinSpacing: 44 },
-  { scale: 'month', tickMinSpacing: 30 },
-  { scale: 'week', tickMinSpacing: 24 },
-  { scale: 'day', tickMinSpacing: 20 },
-] as const satisfies readonly { scale: TimelineScale; tickMinSpacing: number }[];
-const DEFAULT_ZOOM_LEVEL_INDEX = 2;
 const TIMELINE_PAN_BLOCK_SELECTOR = [
   '[data-no-timeline-pan]',
   'a',
@@ -139,7 +137,9 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
   const wheelZoomReleaseTimerRef = useRef<number | null>(null);
   const desiredScrollLeftRef = useRef(0);
   const [scrollbar, setScrollbar] = useState<ScrollbarGeometry>(EMPTY_SCROLLBAR);
-  const [zoomLevelIndex, setZoomLevelIndex] = useState(DEFAULT_ZOOM_LEVEL_INDEX);
+  const [zoomLevelIndex, setZoomLevelIndex] = useState(DEFAULT_TIMELINE_ZOOM_LEVEL_INDEX);
+  const [timeScale, setTimeScale] = useState<TimelineTimeScale>(DEFAULT_TIMELINE_TIME_SCALE);
+  const [scaleMenuOpen, setScaleMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
   const viewModel = useMemo(
@@ -160,16 +160,16 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     return createProjectOverviewDisplayRows(viewModel, expandedProjectIds)
       .filter((row) => visibleProjectIds.has(row.project.projectId));
   }, [expandedProjectIds, statusFilter, viewModel]);
-  const zoomLevel = ZOOM_LEVELS[zoomLevelIndex];
-  const pxPerDay = selectTimelineScale(zoomLevel.scale).pxPerDay;
+  const zoomLevel = TIMELINE_ZOOM_DENSITIES[zoomLevelIndex];
+  const pxPerDay = zoomLevel.pxPerDay;
   const header = useMemo(
     () => buildTimelineHeader(
       viewModel.range,
-      viewModel.timeScale,
+      timeScale,
       pxPerDay,
       zoomLevel.tickMinSpacing,
     ),
-    [pxPerDay, viewModel.range, viewModel.timeScale, zoomLevel.tickMinSpacing],
+    [pxPerDay, timeScale, viewModel.range, zoomLevel.tickMinSpacing],
   );
   const todayX = today >= viewModel.range.startDate && today <= viewModel.range.endDate
     ? header.coordinates.dateToX(today)
@@ -289,7 +289,11 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
 
   const requestTimelineZoom = useCallback((nextZoomLevelIndex: number, anchorClientX: number) => {
     const container = scrollRef.current;
-    const normalizedZoomLevelIndex = clamp(nextZoomLevelIndex, 0, ZOOM_LEVELS.length - 1);
+    const normalizedZoomLevelIndex = clamp(
+      nextZoomLevelIndex,
+      0,
+      TIMELINE_ZOOM_DENSITIES.length - 1,
+    );
     if (
       !container
       || normalizedZoomLevelIndex === zoomLevelIndex
@@ -434,8 +438,8 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       data-project-overview-workspace
       data-testid="project-timeline-workspace"
       data-no-window-drag
-      data-timeline-scale={viewModel.timeScale}
-      data-timeline-zoom-level={zoomLevel.scale}
+      data-timeline-scale={timeScale}
+      data-timeline-zoom-level={zoomLevelIndex}
       data-timeline-px-per-day={pxPerDay}
       data-timeline-start-date={viewModel.range.startDate}
       data-timeline-end-date={viewModel.range.endDate}
@@ -496,7 +500,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
               <button
                 type="button"
                 className="icon-button icon-button--plain timeline-zoom-button"
-                disabled={zoomLevelIndex === ZOOM_LEVELS.length - 1}
+                disabled={zoomLevelIndex === TIMELINE_ZOOM_DENSITIES.length - 1}
                 onClick={() => zoomTimelineBy(1)}
                 aria-label={t.projectManagement.zoomIn}
               >
@@ -523,15 +527,54 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
             <div className="scale-menu-wrap">
               <button
                 type="button"
-                className="scale-button"
-                disabled
-                title={t.projectManagement.scaleUnavailable}
+                className={`scale-button${scaleMenuOpen ? ' is-open' : ''}`}
+                onClick={() => setScaleMenuOpen((open) => !open)}
                 aria-label={t.projectManagement.timelineScale}
-                aria-expanded="false"
+                aria-haspopup="menu"
+                aria-expanded={scaleMenuOpen}
               >
-                {t.projectManagement.annualView}
+                {{
+                  year: t.projectManagement.scaleYear,
+                  quarter: t.projectManagement.scaleQuarter,
+                  month: t.projectManagement.scaleMonth,
+                  week: t.projectManagement.scaleWeek,
+                  day: t.projectManagement.scaleDay,
+                }[timeScale]}
                 <ChevronDown size={14} aria-hidden="true" />
               </button>
+              {scaleMenuOpen ? (
+                <>
+                  <button
+                    type="button"
+                    className="menu-backdrop"
+                    aria-label={t.projectManagement.closeScaleMenu}
+                    onClick={() => setScaleMenuOpen(false)}
+                  />
+                  <div className="dropdown-menu scale-menu" role="menu">
+                    {TIMELINE_TIME_SCALES.map((scale) => (
+                      <button
+                        key={scale}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={timeScale === scale}
+                        className={timeScale === scale ? 'is-selected' : ''}
+                        onClick={() => {
+                          setTimeScale(scale);
+                          setScaleMenuOpen(false);
+                        }}
+                      >
+                        {{
+                          year: t.projectManagement.scaleYear,
+                          quarter: t.projectManagement.scaleQuarter,
+                          month: t.projectManagement.scaleMonth,
+                          week: t.projectManagement.scaleWeek,
+                          day: t.projectManagement.scaleDay,
+                        }[scale]}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
         </div>
@@ -581,7 +624,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
           >
             <TimelineHeader
               canvasWidth={header.coordinates.canvasWidth}
-              months={header.months}
+              segments={header.segments}
               ticks={header.ticks}
               highlightedMonth={highlightedMonth}
               todayX={todayX}

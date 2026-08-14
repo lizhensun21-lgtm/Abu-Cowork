@@ -222,8 +222,12 @@ export interface TranslationDict {
     panelSettings: string;
     controlsUnavailable: string;
     timelineScale: string;
-    annualView: string;
-    scaleUnavailable: string;
+    scaleYear: string;
+    scaleQuarter: string;
+    scaleMonth: string;
+    scaleWeek: string;
+    scaleDay: string;
+    closeScaleMenu: string;
   };
 
   projectManagementPortal: {

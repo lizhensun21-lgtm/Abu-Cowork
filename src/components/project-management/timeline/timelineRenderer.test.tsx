@@ -85,10 +85,88 @@ describe('read-only Project Overview timeline', () => {
     expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('');
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Today' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Timeline scale' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Timeline scale' })).toHaveTextContent('Year');
+    expect(screen.getByRole('button', { name: 'Timeline scale' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Timeline scale' })).toHaveTextContent('Week');
     expect(document.querySelector('.scale-menu-wrap > .scale-button')).toBeInTheDocument();
     expect(document.querySelector('.today-pill')).toHaveTextContent('Aug 13');
+  });
+
+  it('exposes all formal scales and keeps the active dropdown value synchronized', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const scaleButton = screen.getByRole('button', { name: 'Timeline scale' });
+
+    fireEvent.click(scaleButton);
+    expect(screen.getAllByRole('menuitemradio').map((option) => option.textContent)).toEqual([
+      'Year', 'Quarter', 'Month', 'Week', 'Day',
+    ]);
+    expect(screen.getByRole('menuitemradio', { name: 'Week' })).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Quarter' }));
+    expect(scaleButton).toHaveTextContent('Quarter');
+    expect(scaleButton).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('project-timeline-workspace')).toHaveAttribute(
+      'data-timeline-scale',
+      'quarter',
+    );
+  });
+
+  it('changes only ruler presentation while retaining density, graph, coordinates, and scroll', () => {
+    const graph = graphFixture();
+    const before = structuredClone(graph);
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    const bar = screen.getByTestId('timeline-bar-a-yd');
+    const todayLine = screen.getByTestId('timeline-today-line-body');
+    const monthHighlight = screen.getByTestId('timeline-current-month-highlight-body');
+    const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+    const track = thumb.parentElement!;
+    const initialBodyWidth = body.style.width;
+    const initialBarGeometry = { left: bar.style.left, width: bar.style.width };
+    const initialTodayLeft = todayLine.style.left;
+    const initialHighlightGeometry = {
+      left: monthHighlight.style.left,
+      width: monthHighlight.style.width,
+    };
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+    container.scrollLeft = 275;
+    fireEvent.scroll(container);
+    const initialThumbGeometry = { left: thumb.style.left, width: thumb.style.width };
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline scale' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Year' }));
+
+    expect(workspace).toHaveAttribute('data-timeline-scale', 'year');
+    expect(workspace).toHaveAttribute('data-timeline-px-per-day', '4.6');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '2');
+    expect(body.style.width).toBe(initialBodyWidth);
+    expect({ left: bar.style.left, width: bar.style.width }).toEqual(initialBarGeometry);
+    expect(todayLine.style.left).toBe(initialTodayLeft);
+    expect({ left: monthHighlight.style.left, width: monthHighlight.style.width })
+      .toEqual(initialHighlightGeometry);
+    expect(container.scrollLeft).toBe(275);
+    expect({ left: thumb.style.left, width: thumb.style.width }).toEqual(initialThumbGeometry);
+    expect(graph).toEqual(before);
+
+    const coordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!, workspace.dataset.timelineEndDate!, 4.6,
+    );
+    const anchorDate = coordinates.xToDate(475);
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in timeline' }));
+    const zoomedCoordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!, workspace.dataset.timelineEndDate!, 6.2,
+    );
+    expect(workspace).toHaveAttribute('data-timeline-scale', 'year');
+    expect(workspace).toHaveAttribute('data-timeline-px-per-day', '6.2');
+    expect(container.scrollLeft).toBeCloseTo(zoomedCoordinates.dateToX(anchorDate) - 200);
   });
 
   it('keeps status filtering as local read-only UI state', () => {
@@ -199,7 +277,7 @@ describe('read-only Project Overview timeline', () => {
 
     const newCoordinates = createTimelineCoordinates(range.startDate, range.endDate, 6.2);
     expect(workspace).toHaveAttribute('data-timeline-scale', 'week');
-    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'week');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '3');
     expect(workspace).toHaveAttribute('data-timeline-px-per-day', '6.2');
     expect(container.scrollLeft).toBeCloseTo(newCoordinates.dateToX(anchorDate) - 200);
     expect(document.querySelector('.timeline-ruler-track')).toHaveStyle({
@@ -221,7 +299,7 @@ describe('read-only Project Overview timeline', () => {
     fireEvent.click(zoomOut);
     fireEvent.click(zoomOut);
     expect(zoomOut).toBeDisabled();
-    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'year');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '0');
   });
 
   it('uses the pointer position as the Abu-Web Ctrl-wheel zoom anchor', () => {
@@ -258,13 +336,15 @@ describe('read-only Project Overview timeline', () => {
     const newCoordinates = createTimelineCoordinates(
       workspace.dataset.timelineStartDate!, workspace.dataset.timelineEndDate!, 6.2,
     );
-    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'week');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '3');
     expect(container.scrollLeft).toBeCloseTo(newCoordinates.dateToX(anchorDate) - 150);
   });
 
   it('pans the Timeline horizontally with the Abu-Web mouse drag threshold', () => {
     render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
     const container = screen.getByTestId('timeline-scroll-container');
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline scale' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Day' }));
     Object.defineProperties(container, {
       clientWidth: { configurable: true, value: 400 },
       scrollWidth: { configurable: true, value: 1600 },
@@ -293,6 +373,10 @@ describe('read-only Project Overview timeline', () => {
 
     expect(container.scrollLeft).toBe(350);
     expect(container).toHaveClass('is-panning');
+    expect(screen.getByTestId('project-timeline-workspace')).toHaveAttribute(
+      'data-timeline-scale',
+      'day',
+    );
     fireEvent.pointerUp(container, { pointerId: 2, pointerType: 'mouse', isPrimary: true });
     expect(container).not.toHaveClass('is-panning');
     requestAnimationFrame.mockRestore();
@@ -394,11 +478,67 @@ describe('read-only Project Overview timeline', () => {
 });
 
 describe('Timeline visual helpers', () => {
-  it('builds a week ruler while retaining the independent 4.6 px/day density', () => {
-    const header = buildTimelineHeader({ startDate: '2025-12-01', endDate: '2026-02-28' }, 'week', 4.6);
-    expect(header.months.map((month) => month.label)).toEqual(['DEC', 'JAN 2026', 'FEB']);
+  const range = { startDate: '2025-12-01', endDate: '2026-05-31' } as const;
+
+  it('builds a year ruler while retaining the independent 4.6 px/day density', () => {
+    const header = buildTimelineHeader(range, 'year', 4.6, 30);
+    expect(header.segments.map((segment) => segment.label)).toEqual(['2025', '2026']);
+    expect(header.ticks.map((tick) => tick.label)).toEqual(['2025', '2026']);
+    expect(header.coordinates.pxPerDay).toBe(4.6);
+  });
+
+  it('builds a quarter ruler while retaining the independent 4.6 px/day density', () => {
+    const header = buildTimelineHeader(range, 'quarter', 4.6, 30);
+    expect(header.segments.map((segment) => segment.label)).toEqual([
+      'Q4 2025', 'Q1 2026', 'Q2 2026',
+    ]);
+    expect(header.ticks.map((tick) => tick.label)).toEqual([
+      'Q4 2025', 'Q1 2026', 'Q2 2026',
+    ]);
+    expect(header.coordinates.pxPerDay).toBe(4.6);
+  });
+
+  it('builds the Web month ruler while retaining the independent 4.6 px/day density', () => {
+    const header = buildTimelineHeader(range, 'month', 4.6, 30);
+    expect(header.segments.slice(0, 3).map((segment) => segment.label)).toEqual([
+      'DEC', 'JAN 2026', 'FEB',
+    ]);
+    expect(header.ticks.slice(0, 3).map((tick) => tick.label)).toEqual(['1', '1', '1']);
+    expect(header.coordinates.pxPerDay).toBe(4.6);
+  });
+
+  it('builds the Web week ruler while retaining the independent 4.6 px/day density', () => {
+    const header = buildTimelineHeader(range, 'week', 4.6, 30);
+    expect(header.months.slice(0, 3).map((month) => month.label)).toEqual([
+      'DEC', 'JAN 2026', 'FEB',
+    ]);
     expect(header.ticks.length).toBeGreaterThan(3);
     expect(header.months[1].left).toBe(header.coordinates.dateToX('2026-01-01'));
+    expect(header.coordinates.pxPerDay).toBe(4.6);
+  });
+
+  it('builds a finer day ruler while retaining the independent 4.6 px/day density', () => {
+    const dayHeader = buildTimelineHeader(range, 'day', 4.6, 20);
+    const weekHeader = buildTimelineHeader(range, 'week', 4.6, 20);
+    expect(dayHeader.segments.slice(0, 3).map((segment) => segment.label)).toEqual([
+      'DEC', 'JAN 2026', 'FEB',
+    ]);
+    expect(dayHeader.ticks.length).toBeGreaterThan(weekHeader.ticks.length);
+    expect(dayHeader.ticks[0]).toMatchObject({ key: '2025-12-01', label: '1', left: 0 });
+    expect(dayHeader.coordinates.pxPerDay).toBe(4.6);
+  });
+
+  it('creates the one coordinate contract only inside the shared header builder', () => {
+    const rendererSource = readFileSync(
+      resolve('src/components/project-management/timeline/TimelineRenderer.tsx'),
+      'utf8',
+    );
+    const headerSource = readFileSync(
+      resolve('src/components/project-management/timeline/header.ts'),
+      'utf8',
+    );
+    expect(rendererSource).not.toContain('createTimelineCoordinates');
+    expect(headerSource.match(/createTimelineCoordinates\(/g)).toHaveLength(1);
   });
 
   it('returns no bar geometry when either source date is missing', () => {

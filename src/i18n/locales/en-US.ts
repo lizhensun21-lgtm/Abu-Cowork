@@ -195,8 +195,12 @@ const enUS: TranslationDict = {
     panelSettings: 'Panel settings',
     controlsUnavailable: 'Not available in this read-only phase',
     timelineScale: 'Timeline scale',
-    annualView: 'Year',
-    scaleUnavailable: 'The current view uses a fixed week scale',
+    scaleYear: 'Year',
+    scaleQuarter: 'Quarter',
+    scaleMonth: 'Month',
+    scaleWeek: 'Week',
+    scaleDay: 'Day',
+    closeScaleMenu: 'Close timeline scale menu',
   },
 
   projectManagementPortal: {
