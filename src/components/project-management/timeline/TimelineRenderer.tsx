@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
   ChevronDown,
   PanelRight,
@@ -41,6 +49,51 @@ const EMPTY_SCROLLBAR: ScrollbarGeometry = Object.freeze({
   trackWidth: 0,
 });
 
+const TIMELINE_PAN_THRESHOLD_PX = 5;
+const TIMELINE_PAN_BLOCK_SELECTOR = [
+  '[data-no-timeline-pan]',
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '[role="menuitem"]',
+].join(',');
+
+interface ScrollbarDragGesture {
+  startX: number;
+  startScrollLeft: number;
+  startScrollRange: number;
+  active: boolean;
+}
+
+interface TimelinePanGesture {
+  activePointerId: number | null;
+  isPointerDown: boolean;
+  isDragging: boolean;
+  startClientX: number;
+  latestClientX: number;
+  startScrollLeft: number;
+  animationFrameId: number | null;
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function isTimelinePanBlocked(target: EventTarget | null) {
+  return target instanceof Element && target.closest(TIMELINE_PAN_BLOCK_SELECTOR) !== null;
+}
+
+function timelinePanScrollLeft(
+  startScrollLeft: number,
+  startClientX: number,
+  currentClientX: number,
+) {
+  return startScrollLeft - (currentClientX - startClientX);
+}
+
 export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
   graph: Readonly<ProjectGraph>;
   today?: string;
@@ -49,6 +102,22 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
   const scrollRef = useRef<HTMLDivElement>(null);
   const projectRowsRef = useRef<HTMLDivElement>(null);
   const scrollbarRef = useRef<HTMLDivElement>(null);
+  const scrollbarDragRef = useRef<ScrollbarDragGesture>({
+    startX: 0,
+    startScrollLeft: 0,
+    startScrollRange: 0,
+    active: false,
+  });
+  const timelinePanRef = useRef<TimelinePanGesture>({
+    activePointerId: null,
+    isPointerDown: false,
+    isDragging: false,
+    startClientX: 0,
+    latestClientX: 0,
+    startScrollLeft: 0,
+    animationFrameId: null,
+  });
+  const desiredScrollLeftRef = useRef(0);
   const [scrollbar, setScrollbar] = useState<ScrollbarGeometry>(EMPTY_SCROLLBAR);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
@@ -146,10 +215,117 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     const rect = track.getBoundingClientRect();
     const travel = Math.max(rect.width - scrollbar.thumbWidth, 0);
     const progress = travel > 0
-      ? Math.max(0, Math.min(1, (clientX - rect.left - scrollbar.thumbWidth / 2) / travel))
+      ? clamp((clientX - rect.left - scrollbar.thumbWidth / 2) / travel, 0, 1)
       : 0;
-    container.scrollLeft = progress * Math.max(container.scrollWidth - container.clientWidth, 0);
-  }, [scrollbar.thumbWidth]);
+    const nextScrollLeft = progress * Math.max(container.scrollWidth - container.clientWidth, 0);
+    desiredScrollLeftRef.current = nextScrollLeft;
+    container.scrollLeft = nextScrollLeft;
+    updateScrollbar();
+  }, [scrollbar.thumbWidth, updateScrollbar]);
+
+  const finishTimelinePan = useCallback((commitPendingPosition = true) => {
+    const container = scrollRef.current;
+    const pan = timelinePanRef.current;
+    const pointerId = pan.activePointerId;
+
+    if (pan.animationFrameId !== null) {
+      window.cancelAnimationFrame(pan.animationFrameId);
+      pan.animationFrameId = null;
+      if (commitPendingPosition && pan.isDragging && container) {
+        container.scrollLeft = clamp(
+          timelinePanScrollLeft(pan.startScrollLeft, pan.startClientX, pan.latestClientX),
+          0,
+          Math.max(container.scrollWidth - container.clientWidth, 0),
+        );
+        updateScrollbar();
+      }
+    }
+
+    pan.activePointerId = null;
+    pan.isPointerDown = false;
+    pan.isDragging = false;
+    pan.startClientX = 0;
+    pan.latestClientX = 0;
+    pan.startScrollLeft = 0;
+    desiredScrollLeftRef.current = container?.scrollLeft ?? 0;
+    container?.classList.remove('is-panning');
+
+    if (pointerId !== null && container?.hasPointerCapture(pointerId)) {
+      try {
+        container.releasePointerCapture(pointerId);
+      } catch {
+        // Pointer capture may already have been released by the browser.
+      }
+    }
+  }, [updateScrollbar]);
+
+  const handleTimelinePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.pointerType !== 'mouse'
+      || event.button !== 0
+      || !event.isPrimary
+      || isTimelinePanBlocked(event.target)
+    ) {
+      return;
+    }
+
+    const container = scrollRef.current;
+    const pan = timelinePanRef.current;
+    if (!container || pan.isPointerDown || scrollbarDragRef.current.active) return;
+
+    pan.activePointerId = event.pointerId;
+    pan.isPointerDown = true;
+    pan.isDragging = false;
+    pan.startClientX = event.clientX;
+    pan.latestClientX = event.clientX;
+    pan.startScrollLeft = container.scrollLeft;
+    desiredScrollLeftRef.current = container.scrollLeft;
+  }, []);
+
+  const handleTimelinePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = timelinePanRef.current;
+    if (!pan.isPointerDown || pan.activePointerId !== event.pointerId) return;
+
+    pan.latestClientX = event.clientX;
+    const dragDistance = pan.latestClientX - pan.startClientX;
+    desiredScrollLeftRef.current = timelinePanScrollLeft(
+      pan.startScrollLeft,
+      pan.startClientX,
+      pan.latestClientX,
+    );
+    if (!pan.isDragging && Math.abs(dragDistance) <= TIMELINE_PAN_THRESHOLD_PX) return;
+
+    if (!pan.isDragging) {
+      pan.isDragging = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.classList.add('is-panning');
+      window.getSelection()?.removeAllRanges();
+    }
+
+    event.preventDefault();
+    if (pan.animationFrameId !== null) return;
+
+    pan.animationFrameId = window.requestAnimationFrame(() => {
+      const currentPan = timelinePanRef.current;
+      currentPan.animationFrameId = null;
+      const container = scrollRef.current;
+      if (!container || !currentPan.isPointerDown || !currentPan.isDragging) return;
+      container.scrollLeft = clamp(
+        desiredScrollLeftRef.current,
+        0,
+        Math.max(container.scrollWidth - container.clientWidth, 0),
+      );
+      updateScrollbar();
+    });
+  }, [updateScrollbar]);
+
+  const handleTimelinePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (timelinePanRef.current.activePointerId === event.pointerId) finishTimelinePan();
+  }, [finishTimelinePan]);
+
+  const handleTimelinePointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (timelinePanRef.current.activePointerId === event.pointerId) finishTimelinePan(false);
+  }, [finishTimelinePan]);
 
   return (
     <section
@@ -272,7 +448,20 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
               <strong>{t.projectManagement.empty}</strong>
             </div>
           ) : null}
-          <div ref={scrollRef} className="timeline-scroll-container" onScroll={handleScroll}>
+          <div
+            ref={scrollRef}
+            className="timeline-scroll-container"
+            data-testid="timeline-scroll-container"
+            onScroll={handleScroll}
+            onPointerDown={handleTimelinePointerDown}
+            onPointerMove={handleTimelinePointerMove}
+            onPointerUp={handleTimelinePointerUp}
+            onPointerCancel={handleTimelinePointerCancel}
+            onLostPointerCapture={handleTimelinePointerCancel}
+            onDragStart={(event) => {
+              if (timelinePanRef.current.isPointerDown) event.preventDefault();
+            }}
+          >
             <TimelineHeader
               canvasWidth={header.coordinates.canvasWidth}
               months={header.months}
@@ -334,6 +523,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
                       {geometry ? (
                         <span
                           data-testid={`timeline-bar-${row.timeline.timelineId}`}
+                          data-no-timeline-pan
                           className={`timeline-lane__bar${
                             hoveredTimelineId === row.timeline.timelineId ? ' is-project-hovered' : ''
                           }`}
@@ -345,6 +535,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
                         <span
                           key={milestone.id}
                           data-milestone-id={milestone.id}
+                          data-no-timeline-pan
                           className="milestone-node"
                           style={{ left: header.coordinates.dateToX(milestone.date) }}
                           title={`${milestone.name} · ${milestone.date}`}
@@ -379,9 +570,59 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
               aria-valuemax={100}
               aria-valuenow={Math.round(scrollbar.progress * 100)}
               className="timeline-custom-scrollbar__thumb"
+              data-testid="timeline-custom-scrollbar-thumb"
               style={{
                 width: scrollbar.thumbWidth,
                 left: scrollbar.progress * Math.max(scrollbar.trackWidth - scrollbar.thumbWidth, 0),
+              }}
+              onPointerDown={(event) => {
+                const container = scrollRef.current;
+                if (!container) return;
+                scrollbarDragRef.current = {
+                  startX: event.clientX,
+                  startScrollLeft: container.scrollLeft,
+                  startScrollRange: Math.max(container.scrollWidth - container.clientWidth, 0),
+                  active: true,
+                };
+                desiredScrollLeftRef.current = container.scrollLeft;
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                const container = scrollRef.current;
+                const track = scrollbarRef.current;
+                const drag = scrollbarDragRef.current;
+                if (!container || !track || !drag.active) return;
+                const travel = track.getBoundingClientRect().width - scrollbar.thumbWidth;
+                if (travel <= 0) return;
+                const nextScrollLeft = drag.startScrollLeft
+                  + ((event.clientX - drag.startX) / travel) * drag.startScrollRange;
+                desiredScrollLeftRef.current = nextScrollLeft;
+                container.scrollLeft = clamp(
+                  nextScrollLeft,
+                  0,
+                  Math.max(container.scrollWidth - container.clientWidth, 0),
+                );
+                updateScrollbar();
+              }}
+              onPointerUp={(event) => {
+                scrollbarDragRef.current.active = false;
+                desiredScrollLeftRef.current = scrollRef.current?.scrollLeft ?? 0;
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+              }}
+              onPointerCancel={() => {
+                scrollbarDragRef.current.active = false;
+                desiredScrollLeftRef.current = scrollRef.current?.scrollLeft ?? 0;
+              }}
+              onKeyDown={(event) => {
+                const container = scrollRef.current;
+                if (!container || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+                event.preventDefault();
+                container.scrollBy({
+                  left: event.key === 'ArrowLeft' ? -80 : 80,
+                  behavior: 'smooth',
+                });
               }}
             />
           </div>

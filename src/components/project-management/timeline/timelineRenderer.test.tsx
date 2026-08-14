@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ProjectGraph } from '@/project-management/domain';
 import { createTimelineCoordinates } from '@/project-management/timeline';
@@ -123,6 +123,88 @@ describe('read-only Project Overview timeline', () => {
     fireEvent.pointerLeave(projectRow);
     expect(projectRow).not.toHaveClass('is-project-hovered');
     expect(projectBar).not.toHaveClass('is-project-hovered');
+  });
+
+  it('synchronizes native horizontal scroll with the custom scrollbar', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    const track = screen.getByTestId('timeline-custom-scrollbar-thumb').parentElement!;
+    const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: { configurable: true, value: 1600 },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+
+    container.scrollLeft = 600;
+    fireEvent.scroll(container);
+
+    expect(thumb).toHaveStyle({ width: '75px', left: '112.5px' });
+    expect(thumb).toHaveAttribute('aria-valuenow', '50');
+  });
+
+  it('drags the Abu-Web custom scrollbar thumb across the horizontal range', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+    const track = thumb.parentElement!;
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: { configurable: true, value: 1600 },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      width: 300, left: 0, right: 300, top: 0, bottom: 12, height: 12, x: 0, y: 0,
+      toJSON: () => ({}),
+    });
+    Object.assign(thumb, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture: vi.fn(),
+    });
+    fireEvent.scroll(container);
+
+    fireEvent.pointerDown(thumb, { pointerId: 1, clientX: 40 });
+    fireEvent.pointerMove(thumb, { pointerId: 1, clientX: 115 });
+
+    expect(container.scrollLeft).toBe(400);
+    expect(thumb).toHaveAttribute('aria-valuenow', '33');
+  });
+
+  it('pans the Timeline horizontally with the Abu-Web mouse drag threshold', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: { configurable: true, value: 1600 },
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn(() => true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+    container.scrollLeft = 300;
+    let frame: FrameRequestCallback | undefined;
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frame = callback;
+      return 1;
+    });
+
+    fireEvent.pointerDown(container, {
+      pointerId: 2, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 300,
+    });
+    fireEvent.pointerMove(container, {
+      pointerId: 2, pointerType: 'mouse', isPrimary: true, clientX: 296,
+    });
+    expect(container).not.toHaveClass('is-panning');
+    fireEvent.pointerMove(container, {
+      pointerId: 2, pointerType: 'mouse', isPrimary: true, clientX: 250,
+    });
+    frame?.(0);
+
+    expect(container.scrollLeft).toBe(350);
+    expect(container).toHaveClass('is-panning');
+    fireEvent.pointerUp(container, { pointerId: 2, pointerType: 'mouse', isPrimary: true });
+    expect(container).not.toHaveClass('is-panning');
+    requestAnimationFrame.mockRestore();
   });
 
   it('positions bars and milestones through Desktop Phase 6A coordinates', () => {

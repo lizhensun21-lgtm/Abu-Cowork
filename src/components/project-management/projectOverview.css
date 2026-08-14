@@ -565,6 +565,16 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   background: transparent;
+  cursor: grab;
+}
+
+[data-project-overview-workspace] .timeline-scroll-container.is-panning,
+[data-project-overview-workspace] .timeline-scroll-container.is-panning .timeline-lane {
+  cursor: grabbing;
+}
+
+[data-project-overview-workspace] .timeline-scroll-container.is-panning * {
+  user-select: none;
 }
 
 [data-project-overview-workspace] .timeline-scroll-container::-webkit-scrollbar {
@@ -811,10 +821,21 @@
   height: 10px;
   border-radius: 999px;
   background: var(--timeline-scroll-thumb);
+  cursor: grab;
+  touch-action: none;
 }
 
 [data-project-overview-workspace] .timeline-custom-scrollbar__thumb:hover {
   background: var(--timeline-scroll-thumb-hover);
+}
+
+[data-project-overview-workspace] .timeline-custom-scrollbar__thumb:active {
+  cursor: grabbing;
+}
+
+[data-project-overview-workspace] .timeline-custom-scrollbar__thumb:focus-visible {
+  outline: 2px solid var(--po-focus-ring);
+  outline-offset: 2px;
 }
 
 [data-project-overview-workspace] .project-overview-drawer-slot,
