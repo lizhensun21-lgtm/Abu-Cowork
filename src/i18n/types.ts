@@ -228,6 +228,11 @@ export interface TranslationDict {
     scaleWeek: string;
     scaleDay: string;
     closeScaleMenu: string;
+    milestoneQuickCard: string;
+    aggregateMilestoneQuickCard: string;
+    plannedDate: string;
+    deliverableCompletion: string;
+    openIssues: string;
   };
 
   projectManagementPortal: {

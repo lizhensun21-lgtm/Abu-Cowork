@@ -201,6 +201,11 @@ const enUS: TranslationDict = {
     scaleWeek: 'Week',
     scaleDay: 'Day',
     closeScaleMenu: 'Close timeline scale menu',
+    milestoneQuickCard: 'Milestone quick card',
+    aggregateMilestoneQuickCard: 'Milestone cluster quick card',
+    plannedDate: 'Planned date',
+    deliverableCompletion: 'Deliverable completion',
+    openIssues: 'Open issues',
   },
 
   projectManagementPortal: {

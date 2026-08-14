@@ -42,9 +42,16 @@ function estimateMilestoneLabelWidth(label: string) {
 export const TimelineMilestones = memo(function TimelineMilestones({
   milestones,
   coordinates,
+  onPreviewEnter,
+  onPreviewLeave,
 }: {
   readonly milestones: ReadonlyArray<Readonly<TimelineMilestone>>;
   readonly coordinates: TimelineCoordinates;
+  readonly onPreviewEnter?: (
+    anchor: HTMLElement,
+    milestones: ReadonlyArray<Readonly<TimelineMilestone>>,
+  ) => void;
+  readonly onPreviewLeave?: (milestoneId: string) => void;
 }) {
   const layout = useMemo(() => buildMilestoneClusterLayout(
     milestones.map((milestone, stableOrder) => ({
@@ -59,6 +66,10 @@ export const TimelineMilestones = memo(function TimelineMilestones({
     MILESTONE_NODE_WIDTH,
     { left: 0, right: coordinates.canvasWidth },
   ), [coordinates, milestones]);
+  const milestonesById = useMemo(
+    () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
+    [milestones],
+  );
 
   return milestones.map((milestone) => {
     const milestoneLayout = layout.layouts.get(milestone.id);
@@ -92,6 +103,15 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         role={isHiddenClusterMember ? undefined : 'img'}
         aria-hidden={isHiddenClusterMember || undefined}
         aria-label={isHiddenClusterMember ? undefined : accessibleLabel}
+        onPointerEnter={milestoneLayout.isPrimary ? (event) => {
+          const clusterMilestones = (layout.groups.get(milestoneLayout.clusterId) ?? [milestone.id])
+            .map((milestoneId) => milestonesById.get(milestoneId))
+            .filter((item): item is Readonly<TimelineMilestone> => item !== undefined);
+          onPreviewEnter?.(event.currentTarget, clusterMilestones);
+        } : undefined}
+        onPointerLeave={milestoneLayout.isPrimary
+          ? () => onPreviewLeave?.(milestone.id)
+          : undefined}
         title={isHiddenClusterMember ? undefined : `${accessibleLabel} · ${milestone.date}`}
       >
         {milestoneLayout.isPrimary ? (

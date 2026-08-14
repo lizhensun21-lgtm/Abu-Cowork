@@ -38,6 +38,12 @@ import { getTimelineBarGeometry } from './barGeometry';
 import { buildTimelineHeader } from './header';
 import { TimelineHeader } from './TimelineHeader';
 import { TimelineMilestones } from './TimelineMilestones';
+import { MilestoneQuickCard } from './MilestoneQuickCard';
+import {
+  createMilestoneQuickCardController,
+  type MilestoneQuickCardTarget,
+} from './milestoneQuickCardController';
+import type { MilestoneQuickCardMetrics } from './milestoneQuickCardData';
 import { ProjectListRow } from '../ProjectList';
 import {
   createProjectOverviewDisplayRows,
@@ -130,10 +136,16 @@ function timelinePanScrollLeft(
   return startScrollLeft - (currentClientX - startClientX);
 }
 
-export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFocusDate }: {
+export function TimelineRenderer({
+  graph,
+  today = localTodayDateKey(),
+  initialFocusDate,
+  quickCardMetricsByMilestoneId,
+}: {
   graph: Readonly<ProjectGraph>;
   today?: string;
   initialFocusDate?: string;
+  quickCardMetricsByMilestoneId?: ReadonlyMap<string, Readonly<MilestoneQuickCardMetrics>>;
 }) {
   const { t, locale } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -179,6 +191,10 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
   const [scaleMenuOpen, setScaleMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
+  const [quickCardTarget, setQuickCardTarget] = useState<MilestoneQuickCardTarget | null>(null);
+  const [quickCardController] = useState(
+    () => createMilestoneQuickCardController(setQuickCardTarget),
+  );
   const viewModel = useMemo(
     () => createProjectOverviewViewModel(graph, today),
     [graph, today],
@@ -506,6 +522,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
   const handleScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
+    quickCardController.dismiss('scroll');
     if (projectRowsRef.current) {
       projectRowsRef.current.style.transform = `translateY(${-container.scrollTop}px)`;
     }
@@ -516,7 +533,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
     if (!interactionActive) desiredScrollLeftRef.current = container.scrollLeft;
     updateScrollbar();
     checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft);
-  }, [checkAndExtendTimeline, updateScrollbar]);
+  }, [checkAndExtendTimeline, quickCardController, updateScrollbar]);
 
   useEffect(() => {
     updateScrollbar();
@@ -597,10 +614,11 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
       anchorDate: header.coordinates.xToDate(container.scrollLeft + normalizedAnchorClientX),
       anchorClientX: normalizedAnchorClientX,
     };
+    quickCardController.closeQuickCardOnInteractionStart('timeline-zoom');
     isZoomingRef.current = true;
     setZoomLevelIndex(normalizedZoomLevelIndex);
     return true;
-  }, [header.coordinates, zoomLevelIndex]);
+  }, [header.coordinates, quickCardController, zoomLevelIndex]);
 
   const zoomTimelineBy = useCallback((levelDelta: number) => {
     const container = scrollRef.current;
@@ -658,6 +676,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
         wheelZoomReleaseTimerRef.current = null;
       }
       wheelZoomLockedRef.current = false;
+      quickCardController.dispose();
       if (leftExtensionReleaseFrameRef.current !== null) {
         window.cancelAnimationFrame(leftExtensionReleaseFrameRef.current);
       }
@@ -678,7 +697,32 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
       isNavigatingToTodayRef.current = false;
       isZoomingRef.current = false;
     };
-  }, []);
+  }, [quickCardController]);
+
+  useEffect(() => {
+    quickCardController.dismiss('data-change');
+  }, [graph, quickCardController]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!quickCardController.isOpen()) return;
+      const target = event.target;
+      if (
+        target instanceof Element
+        && target.closest('[data-milestone-popover-root], [data-milestone-id]')
+      ) return;
+      quickCardController.dismiss('outside-click');
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') quickCardController.dismiss('escape');
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [quickCardController]);
 
   const handleTimelinePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (
@@ -694,6 +738,8 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
     const pan = timelinePanRef.current;
     if (!container || pan.isPointerDown || scrollbarDragRef.current.active) return;
 
+    quickCardController.closeQuickCardOnInteractionStart('timeline-pan');
+
     pan.activePointerId = event.pointerId;
     pan.isPointerDown = true;
     pan.isDragging = false;
@@ -701,7 +747,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
     pan.latestClientX = event.clientX;
     pan.startScrollLeft = container.scrollLeft;
     desiredScrollLeftRef.current = container.scrollLeft;
-  }, []);
+  }, [quickCardController]);
 
   const handleTimelinePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const pan = timelinePanRef.current;
@@ -748,6 +794,26 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
   const handleTimelinePointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (timelinePanRef.current.activePointerId === event.pointerId) finishTimelinePan(false);
   }, [finishTimelinePan]);
+
+  const handleMilestonePreviewEnter = useCallback((
+    anchorElement: HTMLElement,
+    milestones: MilestoneQuickCardTarget['milestones'],
+  ) => {
+    const milestoneId = milestones[0]?.id;
+    if (!milestoneId) return;
+    quickCardController.enter({ anchorElement, milestoneId, milestones });
+  }, [quickCardController]);
+
+  const handleQuickCardMilestoneSelect = useCallback((milestoneId: string) => {
+    if (!quickCardTarget) return;
+    const milestone = quickCardTarget.milestones.find((item) => item.id === milestoneId);
+    if (!milestone) return;
+    quickCardController.open({
+      anchorElement: quickCardTarget.anchorElement,
+      milestoneId,
+      milestones: [milestone],
+    });
+  }, [quickCardController, quickCardTarget]);
 
   return (
     <section
@@ -1009,6 +1075,8 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
                       <TimelineMilestones
                         milestones={row.timeline.milestones}
                         coordinates={header.coordinates}
+                        onPreviewEnter={handleMilestonePreviewEnter}
+                        onPreviewLeave={(milestoneId) => quickCardController.leave(milestoneId)}
                       />
                     </div>
                   );
@@ -1099,8 +1167,25 @@ export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFo
           </div>
         </div>
         <div className="project-overview-drawer-slot" aria-hidden="true" />
-        <div className="project-overview-overlay-slot" aria-hidden="true" />
       </div>
+      <div data-project-overview-overlay-root />
+      {quickCardTarget ? (
+        <MilestoneQuickCard
+          key={`${quickCardTarget.milestoneId}:${quickCardTarget.milestones.length}`}
+          target={quickCardTarget}
+          projects={graph.projects}
+          metricsByMilestoneId={quickCardMetricsByMilestoneId}
+          locale={locale}
+          labels={{
+            singleCard: t.projectManagement.milestoneQuickCard,
+            aggregateCard: t.projectManagement.aggregateMilestoneQuickCard,
+            plannedDate: t.projectManagement.plannedDate,
+            deliverableCompletion: t.projectManagement.deliverableCompletion,
+            openIssues: t.projectManagement.openIssues,
+          }}
+          onSelectMilestone={handleQuickCardMilestoneSelect}
+        />
+      ) : null}
     </section>
   );
 }

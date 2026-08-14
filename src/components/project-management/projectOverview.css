@@ -984,6 +984,151 @@
   line-height: 16px;
 }
 
+[data-project-overview-workspace] [data-project-overview-overlay-root] {
+  position: absolute;
+  inset: 76px 0 var(--workspace-bottom-bar-height) var(--project-label-width);
+  z-index: 30;
+  pointer-events: none;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview {
+  position: fixed;
+  z-index: 1;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid rgb(222 224 228 / 0.96);
+  border-radius: 8px;
+  color: var(--po-text-primary);
+  background: rgb(253 253 253 / 0.98);
+  box-shadow: 0 2px 8px rgb(17 24 39 / 0.1);
+  pointer-events: auto;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview--single {
+  min-width: 190px;
+  max-width: 320px;
+  padding: 0;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview--aggregate {
+  min-width: 220px;
+  max-width: 360px;
+  padding: 7px 8px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__identity {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  min-height: 31px;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px 7px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__identity-status {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 13px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__identity-copy {
+  min-width: 0;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__title,
+[data-project-overview-overlay-root] .milestone-hover-preview__project,
+[data-project-overview-overlay-root] .milestone-hover-preview__aggregate-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__title {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__project {
+  color: var(--po-text-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__divider {
+  height: 1px;
+  margin: 0 10px;
+  background: rgb(17 24 39 / 0.07);
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__metadata {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 8px;
+  color: var(--po-text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__metadata > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__metadata svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  stroke-width: 1.8;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__list {
+  display: grid;
+  max-height: 240px;
+  overflow: auto;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__aggregate-row {
+  display: grid;
+  height: 28px;
+  min-width: 0;
+  align-items: center;
+  padding: 0 2px;
+  border: 0;
+  color: var(--po-text-secondary);
+  background: transparent;
+  grid-template-columns: 10px minmax(0, auto) max-content max-content max-content;
+  column-gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__aggregate-row:hover,
+[data-project-overview-overlay-root] .milestone-hover-preview__aggregate-row:focus-visible {
+  border-radius: 5px;
+  background: var(--po-hover);
+  outline: none;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__status {
+  width: 8px;
+  height: 10.4px;
+}
+
+[data-project-overview-overlay-root] .milestone-hover-preview__aggregate-title {
+  color: var(--po-text-primary);
+  font-weight: 500;
+}
+
 [data-project-overview-workspace] .timeline-bottom-bar {
   position: relative;
   z-index: 12;
@@ -1029,8 +1174,7 @@
   outline-offset: 2px;
 }
 
-[data-project-overview-workspace] .project-overview-drawer-slot,
-[data-project-overview-workspace] .project-overview-overlay-slot {
+[data-project-overview-workspace] .project-overview-drawer-slot {
   display: none;
 }
 

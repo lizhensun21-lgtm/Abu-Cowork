@@ -201,6 +201,11 @@ const zhCN: TranslationDict = {
     scaleWeek: '周',
     scaleDay: '日',
     closeScaleMenu: '关闭时间尺度菜单',
+    milestoneQuickCard: '里程碑快捷卡片',
+    aggregateMilestoneQuickCard: '里程碑聚合快捷卡片',
+    plannedDate: '计划日期',
+    deliverableCompletion: '交付物完成率',
+    openIssues: '未解决问题',
   },
 
   projectManagementPortal: {
