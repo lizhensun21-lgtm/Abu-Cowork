@@ -10,6 +10,20 @@ export interface TimelineRangePadding {
   readonly futureMonths: number;
 }
 
+export interface TimelineScrollMetrics {
+  readonly scrollLeft: number;
+  readonly scrollWidth: number;
+  readonly clientWidth: number;
+}
+
+export interface TimelineExtensionEdges {
+  readonly left: boolean;
+  readonly right: boolean;
+}
+
+export const TIMELINE_RANGE_EXTENSION_MONTHS = 12;
+export const TIMELINE_RANGE_EDGE_THRESHOLD_RATIO = 0.2;
+
 const DEFAULT_RANGE_PADDING: TimelineRangePadding = Object.freeze({
   pastMonths: 2,
   futureMonths: 2,
@@ -85,4 +99,26 @@ export function extendTimelineRangeToIncludeDate(
   while (targetDate < startDate) startDate = addTimelineMonths(startDate, -extension.pastMonths);
   while (targetDate > endDate) endDate = addTimelineMonths(endDate, extension.futureMonths);
   return Object.freeze({ startDate, endDate });
+}
+
+export function timelineExtensionEdges(
+  metrics: TimelineScrollMetrics,
+  thresholdRatio: number,
+  desiredScrollLeft = metrics.scrollLeft,
+): TimelineExtensionEdges {
+  if (!Number.isFinite(thresholdRatio) || thresholdRatio < 0) {
+    throw new Error('Timeline extension threshold ratio must be non-negative');
+  }
+  const threshold = metrics.clientWidth * thresholdRatio;
+  const maxScrollLeft = Math.max(metrics.scrollWidth - metrics.clientWidth, 0);
+  return Object.freeze({
+    left: desiredScrollLeft < threshold || metrics.scrollLeft < threshold,
+    right:
+      desiredScrollLeft > maxScrollLeft - threshold
+      || maxScrollLeft - metrics.scrollLeft < threshold,
+  });
+}
+
+export function compensatePrependScrollLeft(scrollLeft: number, prependWidth: number): number {
+  return scrollLeft + prependWidth;
 }

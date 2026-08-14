@@ -4,7 +4,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ProjectGraph } from '@/project-management/domain';
-import { createTimelineCoordinates } from '@/project-management/timeline';
+import {
+  addTimelineMonths,
+  createTimelineCoordinates,
+  timelineDaysBetween,
+} from '@/project-management/timeline';
 import {
   createProjectOverviewDisplayRows,
   createProjectOverviewViewModel,
@@ -240,13 +244,14 @@ describe('read-only Project Overview timeline', () => {
       hasPointerCapture: vi.fn(() => true),
       releasePointerCapture: vi.fn(),
     });
+    container.scrollLeft = 200;
     fireEvent.scroll(container);
 
     fireEvent.pointerDown(thumb, { pointerId: 1, clientX: 40 });
     fireEvent.pointerMove(thumb, { pointerId: 1, clientX: 115 });
 
-    expect(container.scrollLeft).toBe(400);
-    expect(thumb).toHaveAttribute('aria-valuenow', '33');
+    expect(container.scrollLeft).toBe(600);
+    expect(thumb).toHaveAttribute('aria-valuenow', '50');
   });
 
   it('zooms through the Abu-Web density levels around the viewport-center anchor', () => {
@@ -380,6 +385,218 @@ describe('read-only Project Overview timeline', () => {
     fireEvent.pointerUp(container, { pointerId: 2, pointerType: 'mouse', isPrimary: true });
     expect(container).not.toHaveClass('is-panning');
     requestAnimationFrame.mockRestore();
+  });
+
+  it('extends twelve months to the past at the 20% edge and preserves visible date geometry', () => {
+    const graph = graphFixture();
+    const before = structuredClone(graph);
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+    const track = thumb.parentElement!;
+    const bar = screen.getByTestId('timeline-bar-a-yd');
+    const milestone = document.querySelector<HTMLElement>('[data-milestone-id="gate"]')!;
+    const todayLine = screen.getByTestId('timeline-today-line-body');
+    const highlight = screen.getByTestId('timeline-current-month-highlight-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+    const previousStartDate = workspace.dataset.timelineStartDate!;
+    const previousEndDate = workspace.dataset.timelineEndDate!;
+    const nextStartDate = addTimelineMonths(previousStartDate, -12);
+    const prependWidth = timelineDaysBetween(nextStartDate, previousStartDate) * 4.6;
+    const beforeGeometry = [bar, milestone, todayLine, highlight]
+      .map((element) => Number.parseFloat(element.style.left));
+
+    container.scrollLeft = 60;
+    fireEvent.scroll(container);
+
+    expect(workspace).toHaveAttribute('data-timeline-start-date', nextStartDate);
+    expect(workspace).toHaveAttribute('data-timeline-end-date', previousEndDate);
+    expect(container.scrollLeft).toBeCloseTo(60 + prependWidth);
+    const afterGeometry = [bar, milestone, todayLine, highlight]
+      .map((element) => Number.parseFloat(element.style.left));
+    afterGeometry.forEach((left, index) => {
+      expect(left - beforeGeometry[index]).toBeCloseTo(prependWidth);
+      expect(left - container.scrollLeft).toBeCloseTo(beforeGeometry[index] - 60);
+    });
+    expect(Number.parseFloat(thumb.style.width)).toBeLessThan(300);
+    expect(graph).toEqual(before);
+  });
+
+  it('extends twelve months to the future without moving the viewport or resetting scale and zoom', async () => {
+    const graph = graphFixture();
+    const before = structuredClone(graph);
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline scale' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in timeline' }));
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    const previousEndDate = workspace.dataset.timelineEndDate!;
+    const previousGeometry = {
+      bar: screen.getByTestId('timeline-bar-a-yd').style.left,
+      milestone: document.querySelector<HTMLElement>('[data-milestone-id="gate"]')!.style.left,
+      today: screen.getByTestId('timeline-today-line-body').style.left,
+      highlight: screen.getByTestId('timeline-current-month-highlight-body').style.left,
+    };
+    const nearRight = container.scrollWidth - container.clientWidth - 60;
+    container.scrollLeft = nearRight;
+
+    fireEvent.scroll(container);
+    fireEvent.scroll(container);
+    fireEvent.scroll(container);
+
+    expect(workspace).toHaveAttribute(
+      'data-timeline-end-date',
+      addTimelineMonths(previousEndDate, 12),
+    );
+    expect(container.scrollLeft).toBeCloseTo(nearRight);
+    expect(workspace).toHaveAttribute('data-timeline-scale', 'month');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '3');
+    expect(workspace).toHaveAttribute('data-timeline-px-per-day', '6.2');
+    expect({
+      bar: screen.getByTestId('timeline-bar-a-yd').style.left,
+      milestone: document.querySelector<HTMLElement>('[data-milestone-id="gate"]')!.style.left,
+      today: screen.getByTestId('timeline-today-line-body').style.left,
+      highlight: screen.getByTestId('timeline-current-month-highlight-body').style.left,
+    }).toEqual(previousGeometry);
+    expect(graph).toEqual(before);
+  });
+
+  it('keeps pan and Shift-wheel scrolling active after a range extension', async () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn(() => true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+    container.scrollLeft = 60;
+    fireEvent.scroll(container);
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    const afterExtension = container.scrollLeft;
+    let panFrame: FrameRequestCallback | undefined;
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      panFrame = callback;
+      return 99;
+    });
+    fireEvent.pointerDown(container, {
+      pointerId: 9, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 300,
+    });
+    fireEvent.pointerMove(container, {
+      pointerId: 9, pointerType: 'mouse', isPrimary: true, clientX: 250,
+    });
+    panFrame?.(0);
+    expect(container.scrollLeft).toBeCloseTo(afterExtension + 50);
+    fireEvent.pointerUp(container, { pointerId: 9, pointerType: 'mouse', isPrimary: true });
+
+    const shiftWheel = new Event('wheel', { bubbles: true, cancelable: true });
+    Object.defineProperties(shiftWheel, {
+      shiftKey: { value: true },
+      ctrlKey: { value: false },
+      metaKey: { value: false },
+      deltaY: { value: 80 },
+    });
+    fireEvent(container, shiftWheel);
+    expect(shiftWheel.defaultPrevented).toBe(false);
+    container.scrollLeft += 80;
+    fireEvent.scroll(container);
+    expect(container.scrollLeft).toBeCloseTo(afterExtension + 130);
+    requestAnimationFrame.mockRestore();
+  });
+
+  it('centers Today at the active zoom while retaining the independent scale', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        if (options.left !== undefined) container.scrollLeft = options.left;
+      }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline scale' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Year' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in timeline' }));
+    container.scrollLeft = 0;
+    fireEvent.click(screen.getByRole('button', { name: 'Today' }));
+
+    const coordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!,
+      workspace.dataset.timelineEndDate!,
+      6.2,
+    );
+    expect(container.scrollLeft).toBeCloseTo(coordinates.dateToX('2026-08-13') - 200);
+    expect(workspace).toHaveAttribute('data-timeline-scale', 'year');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', '3');
+  });
+
+  it('expands a missing Today into range before centering without changing ProjectGraph dates', () => {
+    const graph = graphFixture();
+    const before = structuredClone(graph);
+    const { rerender } = render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        if (options.left !== undefined) container.scrollLeft = options.left;
+      }),
+    });
+    rerender(<TimelineRenderer graph={graph} today="2035-06-15" />);
+    expect(screen.queryByTestId('timeline-today-line-body')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Today' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Today' }));
+
+    expect(workspace.dataset.timelineEndDate! >= '2035-06-15').toBe(true);
+    expect(screen.getByTestId('timeline-today-line-body')).toBeInTheDocument();
+    const coordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!,
+      workspace.dataset.timelineEndDate!,
+      4.6,
+    );
+    expect(container.scrollLeft).toBeCloseTo(coordinates.dateToX('2035-06-15') - 200);
+    expect(graph).toEqual(before);
   });
 
   it('positions bars and milestones through Desktop Phase 6A coordinates', () => {

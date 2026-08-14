@@ -20,10 +20,18 @@ import {
 import { useI18n } from '@/i18n';
 import type { ProjectGraph } from '@/project-management/domain';
 import {
+  addTimelineMonths,
+  compensatePrependScrollLeft,
   DEFAULT_TIMELINE_TIME_SCALE,
   DEFAULT_TIMELINE_ZOOM_LEVEL_INDEX,
+  extendTimelineRangeToIncludeDate,
+  timelineDaysBetween,
+  timelineExtensionEdges,
+  TIMELINE_RANGE_EDGE_THRESHOLD_RATIO,
+  TIMELINE_RANGE_EXTENSION_MONTHS,
   TIMELINE_TIME_SCALES,
   TIMELINE_ZOOM_DENSITIES,
+  type TimelineRange,
   type TimelineTimeScale,
 } from '@/project-management/timeline';
 import { getTimelineBarGeometry } from './barGeometry';
@@ -73,6 +81,7 @@ const TIMELINE_PAN_BLOCK_SELECTOR = [
 
 interface ScrollbarDragGesture {
   startX: number;
+  latestX: number;
   startScrollLeft: number;
   startScrollRange: number;
   active: boolean;
@@ -93,6 +102,17 @@ interface PendingZoomAnchor {
   anchorClientX: number;
 }
 
+interface PendingLeftExtension {
+  previousScrollLeft: number;
+  previousDesiredScrollLeft: number;
+  prependWidth: number;
+}
+
+interface PendingRightExtension {
+  previousScrollLeft: number;
+  previousDesiredScrollLeft: number;
+}
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
@@ -109,9 +129,10 @@ function timelinePanScrollLeft(
   return startScrollLeft - (currentClientX - startClientX);
 }
 
-export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
+export function TimelineRenderer({ graph, today = localTodayDateKey(), initialFocusDate }: {
   graph: Readonly<ProjectGraph>;
   today?: string;
+  initialFocusDate?: string;
 }) {
   const { t, locale } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -119,6 +140,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
   const scrollbarRef = useRef<HTMLDivElement>(null);
   const scrollbarDragRef = useRef<ScrollbarDragGesture>({
     startX: 0,
+    latestX: 0,
     startScrollLeft: 0,
     startScrollRange: 0,
     active: false,
@@ -133,6 +155,20 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     animationFrameId: null,
   });
   const pendingZoomAnchorRef = useRef<PendingZoomAnchor | null>(null);
+  const pendingLeftExtensionRef = useRef<PendingLeftExtension | null>(null);
+  const pendingRightExtensionRef = useRef<PendingRightExtension | null>(null);
+  const pendingTodayScrollBehaviorRef = useRef<ScrollBehavior | null>(null);
+  const isExtendingLeftRef = useRef(false);
+  const isExtendingRightRef = useRef(false);
+  const isNavigatingToTodayRef = useRef(false);
+  const isZoomingRef = useRef(false);
+  const didInitializeFocusRef = useRef(false);
+  const timelineStartDateRef = useRef('');
+  const timelinePxPerDayRef = useRef(0);
+  const leftExtensionReleaseFrameRef = useRef<number | null>(null);
+  const rightExtensionReleaseFrameRef = useRef<number | null>(null);
+  const zoomReleaseFrameRef = useRef<number | null>(null);
+  const todayNavigationReleaseTimerRef = useRef<number | null>(null);
   const wheelZoomLockedRef = useRef(false);
   const wheelZoomReleaseTimerRef = useRef<number | null>(null);
   const desiredScrollLeftRef = useRef(0);
@@ -146,6 +182,34 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     () => createProjectOverviewViewModel(graph, today),
     [graph, today],
   );
+  const initialTimelineRange = useMemo(
+    () => extendTimelineRangeToIncludeDate(
+      viewModel.range,
+      initialFocusDate ?? today,
+      {
+        pastMonths: TIMELINE_RANGE_EXTENSION_MONTHS,
+        futureMonths: TIMELINE_RANGE_EXTENSION_MONTHS,
+      },
+    ),
+    [initialFocusDate, today, viewModel.range],
+  );
+  const [timelineRange, setTimelineRange] = useState<TimelineRange>(() => initialTimelineRange);
+  const observedProjectRangeRef = useRef(viewModel.range);
+  useEffect(() => {
+    if (
+      observedProjectRangeRef.current.startDate === viewModel.range.startDate
+      && observedProjectRangeRef.current.endDate === viewModel.range.endDate
+    ) return;
+    observedProjectRangeRef.current = viewModel.range;
+    setTimelineRange((current) => ({
+      startDate: viewModel.range.startDate < current.startDate
+        ? viewModel.range.startDate
+        : current.startDate,
+      endDate: viewModel.range.endDate > current.endDate
+        ? viewModel.range.endDate
+        : current.endDate,
+    }));
+  }, [viewModel.range]);
   const [expandedProjectIds, setExpandedProjectIds] = useState<ReadonlySet<string>>(
     () => new Set(
       viewModel.projects
@@ -164,14 +228,14 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
   const pxPerDay = zoomLevel.pxPerDay;
   const header = useMemo(
     () => buildTimelineHeader(
-      viewModel.range,
+      timelineRange,
       timeScale,
       pxPerDay,
       zoomLevel.tickMinSpacing,
     ),
-    [pxPerDay, timeScale, viewModel.range, zoomLevel.tickMinSpacing],
+    [pxPerDay, timeScale, timelineRange, zoomLevel.tickMinSpacing],
   );
-  const todayX = today >= viewModel.range.startDate && today <= viewModel.range.endDate
+  const todayX = today >= timelineRange.startDate && today <= timelineRange.endDate
     ? header.coordinates.dateToX(today)
     : null;
   const highlightedMonth = header.months.find((month) => month.key === today.slice(0, 7)) ?? null;
@@ -199,25 +263,6 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     });
   }, []);
 
-  const handleScroll = useCallback(() => {
-    const container = scrollRef.current;
-    if (container && projectRowsRef.current) {
-      projectRowsRef.current.style.transform = `translateY(${-container.scrollTop}px)`;
-    }
-    updateScrollbar();
-  }, [updateScrollbar]);
-
-  useEffect(() => {
-    updateScrollbar();
-    const container = scrollRef.current;
-    const track = scrollbarRef.current;
-    if (!container || !track || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(updateScrollbar);
-    observer.observe(container);
-    observer.observe(track);
-    return () => observer.disconnect();
-  }, [displayRows, updateScrollbar]);
-
   const toggleProject = useCallback((projectId: string) => {
     setExpandedProjectIds((current) => {
       const next = new Set(current);
@@ -227,14 +272,110 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     });
   }, []);
 
-  const scrollToToday = useCallback(() => {
+  useLayoutEffect(() => {
+    timelineStartDateRef.current = timelineRange.startDate;
+    timelinePxPerDayRef.current = pxPerDay;
+  }, [pxPerDay, timelineRange.startDate]);
+
+  const checkAndExtendTimeline = useCallback((
+    currentScrollLeft: number,
+    desiredScrollLeft = currentScrollLeft,
+  ) => {
     const container = scrollRef.current;
-    if (!container || todayX === null) return;
-    container.scrollTo({
-      left: Math.max(0, todayX - container.clientWidth / 2),
-      behavior: 'smooth',
-    });
-  }, [todayX]);
+    if (
+      !container
+      || isNavigatingToTodayRef.current
+      || isZoomingRef.current
+    ) return;
+
+    const edges = timelineExtensionEdges({
+      scrollLeft: currentScrollLeft,
+      scrollWidth: container.scrollWidth,
+      clientWidth: container.clientWidth,
+    }, TIMELINE_RANGE_EDGE_THRESHOLD_RATIO, desiredScrollLeft);
+
+    if (edges.left && !isExtendingLeftRef.current) {
+      const previousStartDate = timelineStartDateRef.current;
+      const nextStartDate = addTimelineMonths(
+        previousStartDate,
+        -TIMELINE_RANGE_EXTENSION_MONTHS,
+      );
+      isExtendingLeftRef.current = true;
+      pendingLeftExtensionRef.current = {
+        previousScrollLeft: currentScrollLeft,
+        previousDesiredScrollLeft: desiredScrollLeft,
+        prependWidth:
+          timelineDaysBetween(nextStartDate, previousStartDate)
+          * timelinePxPerDayRef.current,
+      };
+      setTimelineRange((current) => ({ ...current, startDate: nextStartDate }));
+    }
+
+    if (edges.right && !isExtendingRightRef.current) {
+      isExtendingRightRef.current = true;
+      pendingRightExtensionRef.current = {
+        previousScrollLeft: currentScrollLeft,
+        previousDesiredScrollLeft: desiredScrollLeft,
+      };
+      setTimelineRange((current) => ({
+        ...current,
+        endDate: addTimelineMonths(current.endDate, TIMELINE_RANGE_EXTENSION_MONTHS),
+      }));
+    }
+  }, []);
+
+  const scheduleTodayNavigationRelease = useCallback((behavior: ScrollBehavior) => {
+    if (todayNavigationReleaseTimerRef.current !== null) {
+      window.clearTimeout(todayNavigationReleaseTimerRef.current);
+    }
+    if (behavior !== 'smooth') {
+      isNavigatingToTodayRef.current = false;
+      todayNavigationReleaseTimerRef.current = null;
+      return;
+    }
+    todayNavigationReleaseTimerRef.current = window.setTimeout(() => {
+      isNavigatingToTodayRef.current = false;
+      todayNavigationReleaseTimerRef.current = null;
+    }, 700);
+  }, []);
+
+  const positionDateWithinCurrentRange = useCallback((
+    date: string,
+    behavior: ScrollBehavior,
+  ) => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const targetScrollLeft = clamp(
+      header.coordinates.dateToX(date) - container.clientWidth / 2,
+      0,
+      Math.max(container.scrollWidth - container.clientWidth, 0),
+    );
+    isNavigatingToTodayRef.current = true;
+    desiredScrollLeftRef.current = targetScrollLeft;
+    container.scrollTo({ left: targetScrollLeft, behavior });
+    updateScrollbar();
+    scheduleTodayNavigationRelease(behavior);
+  }, [header.coordinates, scheduleTodayNavigationRelease, updateScrollbar]);
+
+  const scrollToToday = useCallback(() => {
+    const expandedRange = extendTimelineRangeToIncludeDate(
+      timelineRange,
+      today,
+      {
+        pastMonths: TIMELINE_RANGE_EXTENSION_MONTHS,
+        futureMonths: TIMELINE_RANGE_EXTENSION_MONTHS,
+      },
+    );
+    if (
+      expandedRange.startDate !== timelineRange.startDate
+      || expandedRange.endDate !== timelineRange.endDate
+    ) {
+      pendingTodayScrollBehaviorRef.current = 'smooth';
+      setTimelineRange(expandedRange);
+      return;
+    }
+    positionDateWithinCurrentRange(today, 'smooth');
+  }, [positionDateWithinCurrentRange, timelineRange, today]);
 
   const scrollFromTrack = useCallback((clientX: number) => {
     const container = scrollRef.current;
@@ -249,7 +390,143 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     desiredScrollLeftRef.current = nextScrollLeft;
     container.scrollLeft = nextScrollLeft;
     updateScrollbar();
-  }, [scrollbar.thumbWidth, updateScrollbar]);
+    checkAndExtendTimeline(container.scrollLeft, nextScrollLeft);
+  }, [checkAndExtendTimeline, scrollbar.thumbWidth, updateScrollbar]);
+
+  const rebaseScrollbarDrag = useCallback((container: HTMLDivElement) => {
+    const drag = scrollbarDragRef.current;
+    if (!drag.active) return;
+    drag.startX = drag.latestX;
+    drag.startScrollLeft = container.scrollLeft;
+    drag.startScrollRange = Math.max(container.scrollWidth - container.clientWidth, 0);
+  }, []);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const pending = pendingLeftExtensionRef.current;
+    if (!container || !pending) return;
+
+    const compensatedScrollLeft = compensatePrependScrollLeft(
+      pending.previousScrollLeft,
+      pending.prependWidth,
+    );
+    const compensatedDesiredScrollLeft = compensatePrependScrollLeft(
+      pending.previousDesiredScrollLeft,
+      pending.prependWidth,
+    );
+    desiredScrollLeftRef.current = compensatedDesiredScrollLeft;
+    if (timelinePanRef.current.isPointerDown) {
+      timelinePanRef.current.startScrollLeft = compensatePrependScrollLeft(
+        timelinePanRef.current.startScrollLeft,
+        pending.prependWidth,
+      );
+    }
+    container.scrollLeft = clamp(
+      compensatedScrollLeft,
+      0,
+      Math.max(container.scrollWidth - container.clientWidth, 0),
+    );
+    rebaseScrollbarDrag(container);
+    updateScrollbar();
+
+    if (leftExtensionReleaseFrameRef.current !== null) {
+      window.cancelAnimationFrame(leftExtensionReleaseFrameRef.current);
+    }
+    leftExtensionReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      pendingLeftExtensionRef.current = null;
+      isExtendingLeftRef.current = false;
+      leftExtensionReleaseFrameRef.current = null;
+      if (timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active) {
+        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
+      }
+    });
+  }, [
+    checkAndExtendTimeline,
+    header.coordinates.canvasWidth,
+    rebaseScrollbarDrag,
+    timelineRange.startDate,
+    updateScrollbar,
+  ]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const pending = pendingRightExtensionRef.current;
+    if (!container || !pending) return;
+
+    const interactionActive = timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active;
+    const desiredScrollLeft = interactionActive
+      ? pending.previousDesiredScrollLeft
+      : pending.previousScrollLeft;
+    desiredScrollLeftRef.current = desiredScrollLeft;
+    container.scrollLeft = clamp(
+      pending.previousScrollLeft,
+      0,
+      Math.max(container.scrollWidth - container.clientWidth, 0),
+    );
+    rebaseScrollbarDrag(container);
+    updateScrollbar();
+
+    if (rightExtensionReleaseFrameRef.current !== null) {
+      window.cancelAnimationFrame(rightExtensionReleaseFrameRef.current);
+    }
+    rightExtensionReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      pendingRightExtensionRef.current = null;
+      isExtendingRightRef.current = false;
+      rightExtensionReleaseFrameRef.current = null;
+      if (timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active) {
+        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
+      }
+    });
+  }, [
+    checkAndExtendTimeline,
+    header.coordinates.canvasWidth,
+    rebaseScrollbarDrag,
+    timelineRange.endDate,
+    updateScrollbar,
+  ]);
+
+  useLayoutEffect(() => {
+    const behavior = pendingTodayScrollBehaviorRef.current;
+    if (
+      behavior === null
+      || today < timelineRange.startDate
+      || today > timelineRange.endDate
+    ) return;
+    positionDateWithinCurrentRange(today, behavior);
+    pendingTodayScrollBehaviorRef.current = null;
+  }, [positionDateWithinCurrentRange, timelineRange, today]);
+
+  useLayoutEffect(() => {
+    if (didInitializeFocusRef.current) return;
+    positionDateWithinCurrentRange(initialFocusDate ?? today, 'auto');
+    didInitializeFocusRef.current = true;
+  }, [initialFocusDate, positionDateWithinCurrentRange, today]);
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    if (projectRowsRef.current) {
+      projectRowsRef.current.style.transform = `translateY(${-container.scrollTop}px)`;
+    }
+    const interactionActive = timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active;
+    const desiredScrollLeft = interactionActive
+      ? desiredScrollLeftRef.current
+      : container.scrollLeft;
+    if (!interactionActive) desiredScrollLeftRef.current = container.scrollLeft;
+    updateScrollbar();
+    checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft);
+  }, [checkAndExtendTimeline, updateScrollbar]);
+
+  useEffect(() => {
+    updateScrollbar();
+    const container = scrollRef.current;
+    const track = scrollbarRef.current;
+    if (!container || !track || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(updateScrollbar);
+    observer.observe(container);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [displayRows, header.coordinates.canvasWidth, updateScrollbar]);
 
   const finishTimelinePan = useCallback((commitPendingPosition = true) => {
     const container = scrollRef.current;
@@ -260,12 +537,19 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       window.cancelAnimationFrame(pan.animationFrameId);
       pan.animationFrameId = null;
       if (commitPendingPosition && pan.isDragging && container) {
+        const desiredScrollLeft = timelinePanScrollLeft(
+          pan.startScrollLeft,
+          pan.startClientX,
+          pan.latestClientX,
+        );
+        desiredScrollLeftRef.current = desiredScrollLeft;
         container.scrollLeft = clamp(
-          timelinePanScrollLeft(pan.startScrollLeft, pan.startClientX, pan.latestClientX),
+          desiredScrollLeft,
           0,
           Math.max(container.scrollWidth - container.clientWidth, 0),
         );
         updateScrollbar();
+        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft);
       }
     }
 
@@ -285,7 +569,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
         // Pointer capture may already have been released by the browser.
       }
     }
-  }, [updateScrollbar]);
+  }, [checkAndExtendTimeline, updateScrollbar]);
 
   const requestTimelineZoom = useCallback((nextZoomLevelIndex: number, anchorClientX: number) => {
     const container = scrollRef.current;
@@ -300,6 +584,9 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       || timelinePanRef.current.isPointerDown
       || scrollbarDragRef.current.active
       || pendingZoomAnchorRef.current
+      || isExtendingLeftRef.current
+      || isExtendingRightRef.current
+      || isNavigatingToTodayRef.current
     ) {
       return false;
     }
@@ -309,6 +596,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       anchorDate: header.coordinates.xToDate(container.scrollLeft + normalizedAnchorClientX),
       anchorClientX: normalizedAnchorClientX,
     };
+    isZoomingRef.current = true;
     setZoomLevelIndex(normalizedZoomLevelIndex);
     return true;
   }, [header.coordinates, zoomLevelIndex]);
@@ -333,6 +621,13 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     container.scrollLeft = nextScrollLeft;
     pendingZoomAnchorRef.current = null;
     updateScrollbar();
+    if (zoomReleaseFrameRef.current !== null) {
+      window.cancelAnimationFrame(zoomReleaseFrameRef.current);
+    }
+    zoomReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      isZoomingRef.current = false;
+      zoomReleaseFrameRef.current = null;
+    });
   }, [header.coordinates, updateScrollbar]);
 
   const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
@@ -362,6 +657,25 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
         wheelZoomReleaseTimerRef.current = null;
       }
       wheelZoomLockedRef.current = false;
+      if (leftExtensionReleaseFrameRef.current !== null) {
+        window.cancelAnimationFrame(leftExtensionReleaseFrameRef.current);
+      }
+      if (rightExtensionReleaseFrameRef.current !== null) {
+        window.cancelAnimationFrame(rightExtensionReleaseFrameRef.current);
+      }
+      if (zoomReleaseFrameRef.current !== null) {
+        window.cancelAnimationFrame(zoomReleaseFrameRef.current);
+      }
+      if (todayNavigationReleaseTimerRef.current !== null) {
+        window.clearTimeout(todayNavigationReleaseTimerRef.current);
+      }
+      pendingLeftExtensionRef.current = null;
+      pendingRightExtensionRef.current = null;
+      pendingTodayScrollBehaviorRef.current = null;
+      isExtendingLeftRef.current = false;
+      isExtendingRightRef.current = false;
+      isNavigatingToTodayRef.current = false;
+      isZoomingRef.current = false;
     };
   }, []);
 
@@ -422,8 +736,9 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
         Math.max(container.scrollWidth - container.clientWidth, 0),
       );
       updateScrollbar();
+      checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
     });
-  }, [updateScrollbar]);
+  }, [checkAndExtendTimeline, updateScrollbar]);
 
   const handleTimelinePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (timelinePanRef.current.activePointerId === event.pointerId) finishTimelinePan();
@@ -441,8 +756,8 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       data-timeline-scale={timeScale}
       data-timeline-zoom-level={zoomLevelIndex}
       data-timeline-px-per-day={pxPerDay}
-      data-timeline-start-date={viewModel.range.startDate}
-      data-timeline-end-date={viewModel.range.endDate}
+      data-timeline-start-date={timelineRange.startDate}
+      data-timeline-end-date={timelineRange.endDate}
       className="timeline-card main-workspace is-read-only"
       aria-label={t.sidebar.projectManagement}
     >
@@ -520,7 +835,6 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
               type="button"
               className="today-button"
               onClick={scrollToToday}
-              disabled={todayX === null}
             >
               {t.projectManagement.today}
             </button>
@@ -740,6 +1054,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
                 if (!container) return;
                 scrollbarDragRef.current = {
                   startX: event.clientX,
+                  latestX: event.clientX,
                   startScrollLeft: container.scrollLeft,
                   startScrollRange: Math.max(container.scrollWidth - container.clientWidth, 0),
                   active: true,
@@ -752,6 +1067,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
                 const track = scrollbarRef.current;
                 const drag = scrollbarDragRef.current;
                 if (!container || !track || !drag.active) return;
+                drag.latestX = event.clientX;
                 const travel = track.getBoundingClientRect().width - scrollbar.thumbWidth;
                 if (travel <= 0) return;
                 const nextScrollLeft = drag.startScrollLeft
@@ -763,10 +1079,15 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
                   Math.max(container.scrollWidth - container.clientWidth, 0),
                 );
                 updateScrollbar();
+                checkAndExtendTimeline(container.scrollLeft, nextScrollLeft);
               }}
               onPointerUp={(event) => {
+                const container = scrollRef.current;
                 scrollbarDragRef.current.active = false;
-                desiredScrollLeftRef.current = scrollRef.current?.scrollLeft ?? 0;
+                desiredScrollLeftRef.current = container?.scrollLeft ?? 0;
+                if (container) {
+                  checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
+                }
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                   event.currentTarget.releasePointerCapture(event.pointerId);
                 }

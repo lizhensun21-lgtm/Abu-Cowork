@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTimelineRange, extendTimelineRangeToIncludeDate } from './range';
+import {
+  compensatePrependScrollLeft,
+  deriveTimelineRange,
+  extendTimelineRangeToIncludeDate,
+  timelineExtensionEdges,
+  TIMELINE_RANGE_EDGE_THRESHOLD_RATIO,
+  TIMELINE_RANGE_EXTENSION_MONTHS,
+} from './range';
 
 describe('Timeline range contract', () => {
   it('derives month-aligned padding from actual row bounds', () => {
@@ -29,6 +36,35 @@ describe('Timeline range contract', () => {
       '2028-01-01',
       { pastMonths: 12, futureMonths: 12 },
     )).toEqual({ startDate: '2026-01-01', endDate: '2028-12-31' });
+  });
+
+  it('uses the Abu-Web 20% edge threshold and twelve-month range chunks', () => {
+    expect(TIMELINE_RANGE_EDGE_THRESHOLD_RATIO).toBe(0.2);
+    expect(TIMELINE_RANGE_EXTENSION_MONTHS).toBe(12);
+    expect(timelineExtensionEdges({
+      scrollLeft: 79,
+      scrollWidth: 2_000,
+      clientWidth: 400,
+    }, TIMELINE_RANGE_EDGE_THRESHOLD_RATIO)).toEqual({ left: true, right: false });
+    expect(timelineExtensionEdges({
+      scrollLeft: 1_521,
+      scrollWidth: 2_000,
+      clientWidth: 400,
+    }, TIMELINE_RANGE_EDGE_THRESHOLD_RATIO)).toEqual({ left: false, right: true });
+  });
+
+  it('uses desired pan position at clamped edges and compensates prepended pixels', () => {
+    expect(timelineExtensionEdges({
+      scrollLeft: 0,
+      scrollWidth: 2_000,
+      clientWidth: 400,
+    }, TIMELINE_RANGE_EDGE_THRESHOLD_RATIO, -120)).toEqual({ left: true, right: false });
+    expect(timelineExtensionEdges({
+      scrollLeft: 1_600,
+      scrollWidth: 2_000,
+      clientWidth: 400,
+    }, TIMELINE_RANGE_EDGE_THRESHOLD_RATIO, 1_720)).toEqual({ left: false, right: true });
+    expect(compensatePrependScrollLeft(60, 1_679)).toBe(1_739);
   });
 
   it('rejects invalid fallback, row, target, and extension inputs', () => {
