@@ -58,6 +58,7 @@ export function buildTimelineTicks(
   range: TimelineRange,
   coordinates: TimelineCoordinates,
   scale: TimelineScale,
+  tickMinSpacing = TICK_MIN_SPACING[scale],
 ): readonly TimelineHeaderTick[] {
   if (scale === 'month') {
     return Object.freeze(buildTimelineMonths(range, coordinates).map((month) => Object.freeze({
@@ -66,7 +67,7 @@ export function buildTimelineTicks(
   }
   const start = new Date(`${range.startDate}T00:00:00.000Z`);
   let cursor = addTimelineDays(range.startDate, (8 - start.getUTCDay()) % 7);
-  const sampleEveryWeeks = Math.max(1, Math.ceil(TICK_MIN_SPACING[scale] / (coordinates.pxPerDay * 7)));
+  const sampleEveryWeeks = Math.max(1, Math.ceil(tickMinSpacing / (coordinates.pxPerDay * 7)));
   const ticks: TimelineHeaderTick[] = [];
   while (cursor <= range.endDate) {
     const absoluteWeekIndex = Math.round(timelineDaysBetween('1970-01-05', cursor) / 7);
@@ -78,11 +79,16 @@ export function buildTimelineTicks(
   return Object.freeze(ticks);
 }
 
-export function buildTimelineHeader(range: TimelineRange, scale: TimelineScale, pxPerDay: number) {
+export function buildTimelineHeader(
+  range: TimelineRange,
+  scale: TimelineScale,
+  pxPerDay: number,
+  tickMinSpacing = TICK_MIN_SPACING[scale],
+) {
   const coordinates = createTimelineCoordinates(range.startDate, range.endDate, pxPerDay);
   return Object.freeze({
     coordinates,
     months: buildTimelineMonths(range, coordinates),
-    ticks: buildTimelineTicks(range, coordinates, scale),
+    ticks: buildTimelineTicks(range, coordinates, scale, tickMinSpacing),
   });
 }

@@ -171,6 +171,97 @@ describe('read-only Project Overview timeline', () => {
     expect(thumb).toHaveAttribute('aria-valuenow', '33');
   });
 
+  it('zooms through the Abu-Web density levels around the viewport-center anchor', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    const track = screen.getByTestId('timeline-custom-scrollbar-thumb').parentElement!;
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+    container.scrollLeft = 300;
+    fireEvent.scroll(container);
+
+    const range = {
+      startDate: workspace.dataset.timelineStartDate!,
+      endDate: workspace.dataset.timelineEndDate!,
+    };
+    const oldCoordinates = createTimelineCoordinates(range.startDate, range.endDate, 4.6);
+    const anchorDate = oldCoordinates.xToDate(500);
+    const zoomIn = screen.getByRole('button', { name: 'Zoom in timeline' });
+    fireEvent.click(zoomIn);
+
+    const newCoordinates = createTimelineCoordinates(range.startDate, range.endDate, 6.2);
+    expect(workspace).toHaveAttribute('data-timeline-scale', 'week');
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'week');
+    expect(workspace).toHaveAttribute('data-timeline-px-per-day', '6.2');
+    expect(container.scrollLeft).toBeCloseTo(newCoordinates.dateToX(anchorDate) - 200);
+    expect(document.querySelector('.timeline-ruler-track')).toHaveStyle({
+      width: `${newCoordinates.canvasWidth}px`,
+    });
+    expect(body).toHaveStyle({ width: `${newCoordinates.canvasWidth}px` });
+    expect(screen.getByTestId('timeline-today-line-body')).toHaveStyle({
+      left: `${newCoordinates.dateToX('2026-08-13')}px`,
+    });
+    expect(screen.getByTestId('timeline-bar-a-yd')).toHaveStyle({
+      left: `${newCoordinates.dateToX('2026-01-01')}px`,
+    });
+
+    fireEvent.click(zoomIn);
+    expect(zoomIn).toBeDisabled();
+    const zoomOut = screen.getByRole('button', { name: 'Zoom out timeline' });
+    fireEvent.click(zoomOut);
+    fireEvent.click(zoomOut);
+    fireEvent.click(zoomOut);
+    fireEvent.click(zoomOut);
+    expect(zoomOut).toBeDisabled();
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'year');
+  });
+
+  it('uses the pointer position as the Abu-Web Ctrl-wheel zoom anchor', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const workspace = screen.getByTestId('project-timeline-workspace');
+    const container = screen.getByTestId('timeline-scroll-container');
+    const body = screen.getByTestId('timeline-workspace-body');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: {
+        configurable: true,
+        get: () => Number.parseFloat(body.style.width),
+      },
+    });
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({
+      width: 400, left: 100, right: 500, top: 0, bottom: 300, height: 300, x: 100, y: 0,
+      toJSON: () => ({}),
+    });
+    container.scrollLeft = 300;
+    const oldCoordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!, workspace.dataset.timelineEndDate!, 4.6,
+    );
+    const anchorDate = oldCoordinates.xToDate(450);
+
+    const wheelEvent = new Event('wheel', { bubbles: true, cancelable: true });
+    Object.defineProperties(wheelEvent, {
+      ctrlKey: { value: true },
+      metaKey: { value: false },
+      clientX: { value: 250 },
+      deltaY: { value: -100 },
+    });
+    fireEvent(container, wheelEvent);
+
+    const newCoordinates = createTimelineCoordinates(
+      workspace.dataset.timelineStartDate!, workspace.dataset.timelineEndDate!, 6.2,
+    );
+    expect(workspace).toHaveAttribute('data-timeline-zoom-level', 'week');
+    expect(container.scrollLeft).toBeCloseTo(newCoordinates.dateToX(anchorDate) - 150);
+  });
+
   it('pans the Timeline horizontally with the Abu-Web mouse drag threshold', () => {
     render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
     const container = screen.getByTestId('timeline-scroll-container');
@@ -287,7 +378,7 @@ describe('read-only Project Overview timeline', () => {
     const source = files.map((file) => readFileSync(file, 'utf8')).join('\n');
     expect(source).not.toMatch(/localStorage|projectStorage|mockData|stores\/projectStore|types\/project/);
     expect(source).not.toMatch(/Repository|commitProjectManagementGraph|setState|setGraph/);
-    expect(source).not.toMatch(/onWheel|draggable|resize-handle/);
+    expect(source).not.toMatch(/draggable|resize-handle/);
   });
 
   it('keeps copied visual rules scoped to the Project Overview root', () => {

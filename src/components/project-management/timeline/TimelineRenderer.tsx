@@ -1,11 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
 } from 'react';
 import {
   ChevronDown,
@@ -17,6 +19,7 @@ import {
 
 import { useI18n } from '@/i18n';
 import type { ProjectGraph } from '@/project-management/domain';
+import { selectTimelineScale, type TimelineScale } from '@/project-management/timeline';
 import { getTimelineBarGeometry } from './barGeometry';
 import { buildTimelineHeader } from './header';
 import { TimelineHeader } from './TimelineHeader';
@@ -50,6 +53,15 @@ const EMPTY_SCROLLBAR: ScrollbarGeometry = Object.freeze({
 });
 
 const TIMELINE_PAN_THRESHOLD_PX = 5;
+const TIMELINE_WHEEL_ZOOM_THROTTLE_MS = 180;
+const ZOOM_LEVELS = [
+  { scale: 'year', tickMinSpacing: 56 },
+  { scale: 'quarter', tickMinSpacing: 44 },
+  { scale: 'month', tickMinSpacing: 30 },
+  { scale: 'week', tickMinSpacing: 24 },
+  { scale: 'day', tickMinSpacing: 20 },
+] as const satisfies readonly { scale: TimelineScale; tickMinSpacing: number }[];
+const DEFAULT_ZOOM_LEVEL_INDEX = 2;
 const TIMELINE_PAN_BLOCK_SELECTOR = [
   '[data-no-timeline-pan]',
   'a',
@@ -76,6 +88,11 @@ interface TimelinePanGesture {
   latestClientX: number;
   startScrollLeft: number;
   animationFrameId: number | null;
+}
+
+interface PendingZoomAnchor {
+  anchorDate: string;
+  anchorClientX: number;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -117,8 +134,12 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     startScrollLeft: 0,
     animationFrameId: null,
   });
+  const pendingZoomAnchorRef = useRef<PendingZoomAnchor | null>(null);
+  const wheelZoomLockedRef = useRef(false);
+  const wheelZoomReleaseTimerRef = useRef<number | null>(null);
   const desiredScrollLeftRef = useRef(0);
   const [scrollbar, setScrollbar] = useState<ScrollbarGeometry>(EMPTY_SCROLLBAR);
+  const [zoomLevelIndex, setZoomLevelIndex] = useState(DEFAULT_ZOOM_LEVEL_INDEX);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
   const viewModel = useMemo(
@@ -139,9 +160,16 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     return createProjectOverviewDisplayRows(viewModel, expandedProjectIds)
       .filter((row) => visibleProjectIds.has(row.project.projectId));
   }, [expandedProjectIds, statusFilter, viewModel]);
+  const zoomLevel = ZOOM_LEVELS[zoomLevelIndex];
+  const pxPerDay = selectTimelineScale(zoomLevel.scale).pxPerDay;
   const header = useMemo(
-    () => buildTimelineHeader(viewModel.range, viewModel.timeScale, viewModel.pxPerDay),
-    [viewModel],
+    () => buildTimelineHeader(
+      viewModel.range,
+      viewModel.timeScale,
+      pxPerDay,
+      zoomLevel.tickMinSpacing,
+    ),
+    [pxPerDay, viewModel.range, viewModel.timeScale, zoomLevel.tickMinSpacing],
   );
   const todayX = today >= viewModel.range.startDate && today <= viewModel.range.endDate
     ? header.coordinates.dateToX(today)
@@ -259,6 +287,80 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
     }
   }, [updateScrollbar]);
 
+  const requestTimelineZoom = useCallback((nextZoomLevelIndex: number, anchorClientX: number) => {
+    const container = scrollRef.current;
+    const normalizedZoomLevelIndex = clamp(nextZoomLevelIndex, 0, ZOOM_LEVELS.length - 1);
+    if (
+      !container
+      || normalizedZoomLevelIndex === zoomLevelIndex
+      || timelinePanRef.current.isPointerDown
+      || scrollbarDragRef.current.active
+      || pendingZoomAnchorRef.current
+    ) {
+      return false;
+    }
+
+    const normalizedAnchorClientX = clamp(anchorClientX, 0, container.clientWidth);
+    pendingZoomAnchorRef.current = {
+      anchorDate: header.coordinates.xToDate(container.scrollLeft + normalizedAnchorClientX),
+      anchorClientX: normalizedAnchorClientX,
+    };
+    setZoomLevelIndex(normalizedZoomLevelIndex);
+    return true;
+  }, [header.coordinates, zoomLevelIndex]);
+
+  const zoomTimelineBy = useCallback((levelDelta: number) => {
+    const container = scrollRef.current;
+    if (!container) return false;
+    return requestTimelineZoom(zoomLevelIndex + levelDelta, container.clientWidth / 2);
+  }, [requestTimelineZoom, zoomLevelIndex]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const pendingZoomAnchor = pendingZoomAnchorRef.current;
+    if (!container || !pendingZoomAnchor) return;
+
+    const nextScrollLeft = clamp(
+      header.coordinates.dateToX(pendingZoomAnchor.anchorDate) - pendingZoomAnchor.anchorClientX,
+      0,
+      Math.max(container.scrollWidth - container.clientWidth, 0),
+    );
+    desiredScrollLeftRef.current = nextScrollLeft;
+    container.scrollLeft = nextScrollLeft;
+    pendingZoomAnchorRef.current = null;
+    updateScrollbar();
+  }, [header.coordinates, updateScrollbar]);
+
+  const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+      if (!(event.ctrlKey || event.metaKey) || event.deltaY === 0) return;
+      event.preventDefault();
+      if (wheelZoomLockedRef.current || timelinePanRef.current.isPointerDown) return;
+
+      const container = event.currentTarget;
+      const viewportRect = container.getBoundingClientRect();
+      const didZoom = requestTimelineZoom(
+        zoomLevelIndex + (event.deltaY < 0 ? 1 : -1),
+        event.clientX - viewportRect.left,
+      );
+      if (!didZoom) return;
+
+      wheelZoomLockedRef.current = true;
+      wheelZoomReleaseTimerRef.current = window.setTimeout(() => {
+        wheelZoomLockedRef.current = false;
+        wheelZoomReleaseTimerRef.current = null;
+      }, TIMELINE_WHEEL_ZOOM_THROTTLE_MS);
+  }, [requestTimelineZoom, zoomLevelIndex]);
+
+  useEffect(() => {
+    return () => {
+      if (wheelZoomReleaseTimerRef.current !== null) {
+        window.clearTimeout(wheelZoomReleaseTimerRef.current);
+        wheelZoomReleaseTimerRef.current = null;
+      }
+      wheelZoomLockedRef.current = false;
+    };
+  }, []);
+
   const handleTimelinePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (
       event.pointerType !== 'mouse'
@@ -333,6 +435,8 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
       data-testid="project-timeline-workspace"
       data-no-window-drag
       data-timeline-scale={viewModel.timeScale}
+      data-timeline-zoom-level={zoomLevel.scale}
+      data-timeline-px-per-day={pxPerDay}
       data-timeline-start-date={viewModel.range.startDate}
       data-timeline-end-date={viewModel.range.endDate}
       className="timeline-card main-workspace is-read-only"
@@ -380,10 +484,22 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
         <div className="timeline-toolbar__right">
           <div className="timeline-toolbar__icon-group">
             <div className="timeline-zoom-control-group" role="group" aria-label={t.projectManagement.timelineZoom}>
-              <button type="button" className="icon-button icon-button--plain timeline-zoom-button" disabled title={t.projectManagement.zoomUnavailable} aria-label={t.projectManagement.zoomOut}>
+              <button
+                type="button"
+                className="icon-button icon-button--plain timeline-zoom-button"
+                disabled={zoomLevelIndex === 0}
+                onClick={() => zoomTimelineBy(-1)}
+                aria-label={t.projectManagement.zoomOut}
+              >
                 <ZoomOut size={14} aria-hidden="true" />
               </button>
-              <button type="button" className="icon-button icon-button--plain timeline-zoom-button" disabled title={t.projectManagement.zoomUnavailable} aria-label={t.projectManagement.zoomIn}>
+              <button
+                type="button"
+                className="icon-button icon-button--plain timeline-zoom-button"
+                disabled={zoomLevelIndex === ZOOM_LEVELS.length - 1}
+                onClick={() => zoomTimelineBy(1)}
+                aria-label={t.projectManagement.zoomIn}
+              >
                 <ZoomIn size={14} aria-hidden="true" />
               </button>
             </div>
@@ -453,6 +569,7 @@ export function TimelineRenderer({ graph, today = localTodayDateKey() }: {
             className="timeline-scroll-container"
             data-testid="timeline-scroll-container"
             onScroll={handleScroll}
+            onWheel={handleTimelineWheel}
             onPointerDown={handleTimelinePointerDown}
             onPointerMove={handleTimelinePointerMove}
             onPointerUp={handleTimelinePointerUp}
