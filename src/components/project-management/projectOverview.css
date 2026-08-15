@@ -852,6 +852,106 @@
   transform: translate(calc(-50% + var(--milestone-cluster-marker-offset, 0px)), -50%);
 }
 
+[data-project-overview-workspace] .timeline-lane__bar {
+  cursor: grab;
+  touch-action: none;
+}
+
+[data-project-overview-workspace] .timeline-lane__bar.is-dragging,
+[data-project-overview-workspace] .timeline-lane__bar.is-resizing {
+  z-index: 24;
+  border-color: #adb3bc;
+  box-shadow: 0 3px 7px rgb(0 0 0 / 0.11);
+}
+
+[data-project-overview-workspace] .timeline-lane__bar.is-dragging {
+  cursor: grabbing;
+}
+
+[data-project-overview-workspace] .timeline-lane__bar.is-resizing {
+  cursor: ew-resize;
+}
+
+[data-project-overview-workspace] .timeline-lane__bar.is-saving {
+  cursor: progress;
+  opacity: 0.82;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  z-index: 5;
+  width: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle--start {
+  left: -3px;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle--end {
+  right: -3px;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle::after {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  border-radius: 1px;
+  background: rgb(95 99 104 / 0.7);
+  content: '';
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle--start::after {
+  left: 3px;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle--end::after {
+  right: 3px;
+}
+
+[data-project-overview-workspace] .timeline-lane__bar:hover
+  .timeline-lane__resize-handle::after {
+  opacity: 0.22;
+}
+
+[data-project-overview-workspace] .timeline-lane__resize-handle:hover::after,
+[data-project-overview-workspace] .timeline-lane__resize-handle.is-active::after,
+[data-project-overview-workspace] .timeline-lane__bar.is-resizing
+  .timeline-lane__resize-handle::after {
+  opacity: 0.58;
+}
+
+[data-project-overview-workspace] .milestone-node:not(.is-saving) .milestone-node__marker-hit {
+  cursor: grab;
+}
+
+[data-project-overview-workspace] .milestone-node.is-dragging {
+  z-index: 28;
+  opacity: 0.8;
+  filter: drop-shadow(0 3px 5px rgb(17 24 39 / 0.24));
+}
+
+[data-project-overview-workspace] .milestone-node.is-dragging .milestone-node__marker-hit {
+  cursor: grabbing;
+}
+
+[data-project-overview-workspace] .milestone-node:not(.is-clustered).is-dragging
+  .milestone-node__diamond,
+[data-project-overview-workspace] .milestone-node.is-clustered.is-dragging
+  .milestone-node__cluster-marker {
+  transform: scale(1.08);
+}
+
+[data-project-overview-workspace] .milestone-node.is-saving {
+  opacity: 0.72;
+}
+
 [data-project-overview-workspace] .milestone-node.is-clustered {
   pointer-events: none;
 }

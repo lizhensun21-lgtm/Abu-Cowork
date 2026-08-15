@@ -18,6 +18,7 @@ import {
 import { getTimelineBarGeometry } from './barGeometry';
 import { buildTimelineHeader } from './header';
 import { TimelineRenderer } from './TimelineRenderer';
+import { calculateTimelineScrollbarGeometry } from './timelineScrollbar';
 
 function graphFixture(): ProjectGraph {
   return {
@@ -254,6 +255,30 @@ describe('read-only Project Overview timeline', () => {
     expect(thumb).toHaveAttribute('aria-valuenow', '50');
   });
 
+  it('derives a track click from the current atomic scrollbar snapshot', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
+    const container = screen.getByTestId('timeline-scroll-container');
+    const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+    const track = thumb.parentElement!;
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 400 },
+      scrollWidth: { configurable: true, value: 1600 },
+    });
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      width: 300, left: 0, right: 300, top: 0, bottom: 12, height: 12, x: 0, y: 0,
+      toJSON: () => ({}),
+    });
+    container.scrollLeft = 400;
+    fireEvent.scroll(container);
+
+    fireEvent.pointerDown(track, { pointerId: 2, clientX: 150 });
+
+    expect(container.scrollLeft).toBeCloseTo(600);
+    expect(thumb).toHaveStyle({ width: '75px', left: '112.5px' });
+    expect(thumb).toHaveAttribute('aria-valuenow', '50');
+  });
+
   it('zooms through the Abu-Web density levels around the viewport-center anchor', () => {
     render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
     const workspace = screen.getByTestId('project-timeline-workspace');
@@ -479,6 +504,114 @@ describe('read-only Project Overview timeline', () => {
     }).toEqual(previousGeometry);
     expect(graph).toEqual(before);
   });
+
+  it.each(['left', 'right'] as const)(
+    'rebases the custom scrollbar from final geometry in the same %s range-extension commit',
+    (direction) => {
+      let releaseFrame: FrameRequestCallback | undefined;
+      const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((callback) => {
+          releaseFrame = callback;
+          return 71;
+        });
+      try {
+        render(
+          <TimelineRenderer
+            graph={graphFixture()}
+            today="2026-08-13"
+            onMoveMilestone={vi.fn(async () => undefined)}
+          />,
+        );
+        const workspace = screen.getByTestId('project-timeline-workspace');
+        const container = screen.getByTestId('timeline-scroll-container');
+        const body = screen.getByTestId('timeline-workspace-body');
+        const thumb = screen.getByTestId('timeline-custom-scrollbar-thumb');
+        const track = thumb.parentElement!;
+        Object.defineProperties(container, {
+          clientWidth: { configurable: true, value: 400 },
+          scrollWidth: {
+            configurable: true,
+            get: () => Number.parseFloat(body.style.width),
+          },
+          getBoundingClientRect: {
+            configurable: true,
+            value: () => ({ left: 0, right: 400, top: 0, bottom: 300, width: 400, height: 300, x: 0, y: 0, toJSON: () => ({}) }),
+          },
+        });
+        Object.defineProperty(track, 'clientWidth', { configurable: true, value: 300 });
+        container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+        fireEvent.scroll(container);
+
+        const oldScrollLeft = container.scrollLeft;
+        const oldMaxScrollLeft = container.scrollWidth - container.clientWidth;
+        const oldThumbLeft = Number.parseFloat(thumb.style.left);
+        const oldThumbWidth = Number.parseFloat(thumb.style.width);
+        const publishedGeometries: Array<{ left: number; width: number }> = [];
+        const originalSetAttribute = thumb.setAttribute.bind(thumb);
+        const setAttribute = vi.spyOn(thumb, 'setAttribute').mockImplementation((name, value) => {
+          originalSetAttribute(name, value);
+          if (name === 'style') {
+            publishedGeometries.push({
+              left: Number.parseFloat(thumb.style.left),
+              width: Number.parseFloat(thumb.style.width),
+            });
+          }
+        });
+        const bar = screen.getByTestId('timeline-bar-a-yd');
+        const oldViewportAnchor = Number.parseFloat(bar.style.left) - oldScrollLeft;
+        const marker = document.querySelector<HTMLElement>('[data-milestone-id="gate"]')!;
+        Object.assign(marker, {
+          setPointerCapture: vi.fn(),
+          hasPointerCapture: vi.fn(() => true),
+          releasePointerCapture: vi.fn(),
+        });
+        fireEvent.pointerDown(marker, {
+          pointerId: 31, pointerType: 'mouse', button: 0, isPrimary: true, clientX: 200,
+        });
+        fireEvent.pointerMove(marker, {
+          pointerId: 31, pointerType: 'mouse', isPrimary: true,
+          clientX: direction === 'left' ? 5 : 395,
+        });
+
+        const newScrollWidth = container.scrollWidth;
+        const newMaxScrollLeft = newScrollWidth - container.clientWidth;
+        const expected = calculateTimelineScrollbarGeometry({
+          scrollLeft: container.scrollLeft,
+          scrollWidth: newScrollWidth,
+          clientWidth: container.clientWidth,
+          trackWidth: 300,
+        });
+        const expectedLeft = expected.progress * (300 - expected.thumbWidth);
+        const committedGeometry = {
+          left: Number.parseFloat(thumb.style.left),
+          width: Number.parseFloat(thumb.style.width),
+        };
+        const staleProgressLeft = (oldScrollLeft / oldMaxScrollLeft)
+          * (300 - expected.thumbWidth);
+
+        expect(newMaxScrollLeft).toBeGreaterThan(oldMaxScrollLeft);
+        expect(committedGeometry.width).toBeCloseTo(expected.thumbWidth);
+        expect(committedGeometry.left).toBeCloseTo(expectedLeft);
+        expect(committedGeometry.left).not.toBeCloseTo(staleProgressLeft);
+        expect(publishedGeometries).toEqual([committedGeometry]);
+        expect(oldThumbWidth).toBeGreaterThan(committedGeometry.width);
+        expect(oldThumbLeft).not.toBe(committedGeometry.left);
+        expect(Number.parseFloat(bar.style.left) - container.scrollLeft).toBeCloseTo(oldViewportAnchor);
+
+        releaseFrame?.(0);
+        expect({
+          left: Number.parseFloat(thumb.style.left),
+          width: Number.parseFloat(thumb.style.width),
+        }).toEqual(committedGeometry);
+        expect(publishedGeometries).toEqual([committedGeometry]);
+        expect(workspace.dataset.timelineStartDate).toBeTruthy();
+        expect(workspace.dataset.timelineEndDate).toBeTruthy();
+        setAttribute.mockRestore();
+      } finally {
+        requestAnimationFrame.mockRestore();
+      }
+    },
+  );
 
   it('keeps pan and Shift-wheel scrolling active after a range extension', async () => {
     render(<TimelineRenderer graph={graphFixture()} today="2026-08-13" />);
@@ -771,7 +904,8 @@ describe('read-only Project Overview timeline', () => {
     const source = files.map((file) => readFileSync(file, 'utf8')).join('\n');
     expect(source).not.toMatch(/localStorage|projectStorage|mockData|stores\/projectStore|types\/project/);
     expect(source).not.toMatch(/Repository|commitProjectManagementGraph|setState|setGraph/);
-    expect(source).not.toMatch(/draggable|resize-handle/);
+    expect(source).not.toMatch(/draggable/);
+    expect(source).toMatch(/timeline-lane__resize-handle/);
   });
 
   it('keeps copied visual rules scoped to the Project Overview root', () => {

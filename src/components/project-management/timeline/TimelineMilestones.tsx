@@ -1,4 +1,9 @@
-import { memo, useMemo, type CSSProperties } from 'react';
+import {
+  memo,
+  useMemo,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import type { TimelineMilestone } from '@/project-management/domain';
 import type { TimelineCoordinates } from '@/project-management/timeline';
@@ -12,6 +17,7 @@ import {
   getMilestoneVisualStatus,
   milestoneStatusStyleToCssVariables,
 } from './milestoneVisualStatus';
+import type { MilestoneDragSession } from './timelineDragSession';
 
 const MILESTONE_LABEL_MAX_WIDTH = 200;
 const MILESTONE_LABEL_MIN_WIDTH = 12;
@@ -44,6 +50,13 @@ export const TimelineMilestones = memo(function TimelineMilestones({
   coordinates,
   onPreviewEnter,
   onPreviewLeave,
+  dragSession,
+  savingMilestoneIds,
+  onDragPointerDown,
+  onDragPointerMove,
+  onDragPointerUp,
+  onDragPointerCancel,
+  previewDatesByMilestoneId,
 }: {
   readonly milestones: ReadonlyArray<Readonly<TimelineMilestone>>;
   readonly coordinates: TimelineCoordinates;
@@ -52,9 +65,27 @@ export const TimelineMilestones = memo(function TimelineMilestones({
     milestones: ReadonlyArray<Readonly<TimelineMilestone>>,
   ) => void;
   readonly onPreviewLeave?: (milestoneId: string) => void;
+  readonly dragSession?: Readonly<MilestoneDragSession> | null;
+  readonly savingMilestoneIds?: ReadonlySet<string>;
+  readonly onDragPointerDown?: (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    milestone: Readonly<TimelineMilestone>,
+  ) => void;
+  readonly onDragPointerMove?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
+  readonly onDragPointerUp?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
+  readonly onDragPointerCancel?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
+  readonly previewDatesByMilestoneId?: ReadonlyMap<string, string>;
 }) {
+  const presentedMilestones = useMemo(() => milestones.map((milestone) => (
+    previewDatesByMilestoneId?.has(milestone.id) || dragSession?.sourceEntityId === milestone.id
+      ? {
+          ...milestone,
+          date: previewDatesByMilestoneId?.get(milestone.id) ?? dragSession!.previewDate,
+        }
+      : milestone
+  )), [dragSession, milestones, previewDatesByMilestoneId]);
   const layout = useMemo(() => buildMilestoneClusterLayout(
-    milestones.map((milestone, stableOrder) => ({
+    presentedMilestones.map((milestone, stableOrder) => ({
       id: milestone.id,
       markerX: coordinates.dateToX(milestone.date),
       groupKey: `${milestone.projectId}:${milestone.timelineId}`,
@@ -65,13 +96,13 @@ export const TimelineMilestones = memo(function TimelineMilestones({
     })),
     MILESTONE_NODE_WIDTH,
     { left: 0, right: coordinates.canvasWidth },
-  ), [coordinates, milestones]);
+  ), [coordinates, presentedMilestones]);
   const milestonesById = useMemo(
-    () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
-    [milestones],
+    () => new Map(presentedMilestones.map((milestone) => [milestone.id, milestone])),
+    [presentedMilestones],
   );
 
-  return milestones.map((milestone) => {
+  return presentedMilestones.map((milestone) => {
     const milestoneLayout = layout.layouts.get(milestone.id);
     if (!milestoneLayout) return null;
     const isHiddenClusterMember = milestoneLayout.clusterSize > 1 && !milestoneLayout.isPrimary;
@@ -83,6 +114,9 @@ export const TimelineMilestones = memo(function TimelineMilestones({
       getMilestoneStatusStyle(visualStatus),
     );
     const backgroundLayerCount = Math.min(milestoneLayout.clusterSize - 1, 2);
+    const isDragging = dragSession?.sourceEntityId === milestone.id
+      && dragSession.hasExceededDragThreshold;
+    const isSaving = savingMilestoneIds?.has(milestone.id) ?? false;
 
     return (
       <span
@@ -92,8 +126,11 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         data-milestone-cluster-size={milestoneLayout.clusterSize}
         data-cluster-primary={String(milestoneLayout.isPrimary)}
         data-milestone-visual-status={visualStatus}
+        data-milestone-preview-date={isDragging ? milestone.date : undefined}
+        data-milestone-dragging={isDragging || undefined}
+        aria-busy={isSaving || undefined}
         data-no-timeline-pan
-        className={`milestone-node${milestoneLayout.clusterSize > 1 ? ' is-clustered' : ''}`}
+        className={`milestone-node${milestoneLayout.clusterSize > 1 ? ' is-clustered' : ''}${isDragging ? ' is-dragging' : ''}${isSaving ? ' is-saving' : ''}`}
         style={{
           left: coordinates.dateToX(milestone.date),
           '--milestone-cluster-z': 4 + Math.min(milestoneLayout.visualOrder, 20),
@@ -103,7 +140,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         role={isHiddenClusterMember ? undefined : 'img'}
         aria-hidden={isHiddenClusterMember || undefined}
         aria-label={isHiddenClusterMember ? undefined : accessibleLabel}
-        onPointerEnter={milestoneLayout.isPrimary ? (event) => {
+        onPointerEnter={milestoneLayout.isPrimary && !isDragging ? (event) => {
           const clusterMilestones = (layout.groups.get(milestoneLayout.clusterId) ?? [milestone.id])
             .map((milestoneId) => milestonesById.get(milestoneId))
             .filter((item): item is Readonly<TimelineMilestone> => item !== undefined);
@@ -112,6 +149,13 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         onPointerLeave={milestoneLayout.isPrimary
           ? () => onPreviewLeave?.(milestone.id)
           : undefined}
+        onPointerDown={milestoneLayout.isPrimary ? (event) => {
+          onDragPointerDown?.(event, milestone);
+        } : undefined}
+        onPointerMove={milestoneLayout.isPrimary ? onDragPointerMove : undefined}
+        onPointerUp={milestoneLayout.isPrimary ? onDragPointerUp : undefined}
+        onPointerCancel={milestoneLayout.isPrimary ? onDragPointerCancel : undefined}
+        onLostPointerCapture={milestoneLayout.isPrimary ? onDragPointerCancel : undefined}
         title={isHiddenClusterMember ? undefined : `${accessibleLabel} · ${milestone.date}`}
       >
         {milestoneLayout.isPrimary ? (

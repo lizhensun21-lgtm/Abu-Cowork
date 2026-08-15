@@ -4,6 +4,9 @@ import { LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useI18n } from '@/i18n';
 import {
   initializeProjectManagement,
+  moveProjectManagementMilestone,
+  moveProjectManagementTimeline,
+  resizeProjectManagementTimeline,
   useProjectManagementStore,
 } from '@/project-management/state';
 import { TimelineRenderer } from './timeline/TimelineRenderer';
@@ -67,7 +70,12 @@ export default function ProjectManagementWorkspace() {
         </div>
       ) : (
         <div className="min-h-0 flex-1">
-          <TimelineRenderer graph={projectGraph} />
+          <TimelineRenderer
+            graph={projectGraph}
+            onMoveMilestone={moveProjectManagementMilestone}
+            onMoveProjectTimeline={moveProjectManagementTimeline}
+            onResizeProjectTimeline={resizeProjectManagementTimeline}
+          />
         </div>
       )}
     </section>

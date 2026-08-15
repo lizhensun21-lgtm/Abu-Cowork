@@ -18,8 +18,14 @@ import {
 } from 'lucide-react';
 
 import { useI18n } from '@/i18n';
+import type {
+  MoveMilestoneCommand,
+  MoveProjectTimelineCommand,
+  ResizeProjectTimelineCommand,
+} from '@/project-management/application';
 import type { ProjectGraph } from '@/project-management/domain';
 import {
+  addTimelineDays,
   addTimelineMonths,
   compensatePrependScrollLeft,
   DEFAULT_TIMELINE_TIME_SCALE,
@@ -44,6 +50,25 @@ import {
   type MilestoneQuickCardTarget,
 } from './milestoneQuickCardController';
 import type { MilestoneQuickCardMetrics } from './milestoneQuickCardData';
+import {
+  createMilestoneDragSession,
+  createProjectBarMoveSession,
+  createProjectBarResizeSession,
+  EMPTY_TIMELINE_EDGE_EXTENSION_GATE,
+  evaluateTimelineEdgeExtension,
+  updateProjectBarMovePreview,
+  updateProjectBarResizePreview,
+  updateMilestoneDragPreview,
+  type MilestoneDragSession,
+  type ProjectBarMoveSession,
+  type ProjectBarResizeSession,
+  type TimelineEdgeDirection,
+  type TimelineEdgeExtensionGate,
+} from './timelineDragSession';
+import {
+  calculateTimelineScrollbarGeometry,
+  type TimelineScrollbarGeometry,
+} from './timelineScrollbar';
 import { ProjectListRow } from '../ProjectList';
 import {
   createProjectOverviewDisplayRows,
@@ -61,15 +86,12 @@ function localTodayDateKey(now = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-interface ScrollbarGeometry {
-  readonly progress: number;
-  readonly thumbWidth: number;
-  readonly trackWidth: number;
-}
-
-const EMPTY_SCROLLBAR: ScrollbarGeometry = Object.freeze({
+const EMPTY_SCROLLBAR: TimelineScrollbarGeometry = Object.freeze({
+  maxScrollLeft: 0,
   progress: 0,
   thumbWidth: 0,
+  thumbTravel: 0,
+  thumbLeft: 0,
   trackWidth: 0,
 });
 
@@ -109,15 +131,26 @@ interface PendingZoomAnchor {
   anchorClientX: number;
 }
 
+type TimelineRangeExtensionInteraction =
+  | 'native-scroll'
+  | 'track-click'
+  | 'scrollbar-drag'
+  | 'timeline-pan'
+  | 'milestone-drag'
+  | 'project-move'
+  | 'project-resize';
+
 interface PendingLeftExtension {
   previousScrollLeft: number;
   previousDesiredScrollLeft: number;
   prependWidth: number;
+  interaction: TimelineRangeExtensionInteraction;
 }
 
 interface PendingRightExtension {
   previousScrollLeft: number;
   previousDesiredScrollLeft: number;
+  interaction: TimelineRangeExtensionInteraction;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -141,16 +174,23 @@ export function TimelineRenderer({
   today = localTodayDateKey(),
   initialFocusDate,
   quickCardMetricsByMilestoneId,
+  onMoveMilestone,
+  onMoveProjectTimeline,
+  onResizeProjectTimeline,
 }: {
   graph: Readonly<ProjectGraph>;
   today?: string;
   initialFocusDate?: string;
   quickCardMetricsByMilestoneId?: ReadonlyMap<string, Readonly<MilestoneQuickCardMetrics>>;
+  onMoveMilestone?: (command: MoveMilestoneCommand) => Promise<void>;
+  onMoveProjectTimeline?: (command: MoveProjectTimelineCommand) => Promise<void>;
+  onResizeProjectTimeline?: (command: ResizeProjectTimelineCommand) => Promise<void>;
 }) {
   const { t, locale } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const projectRowsRef = useRef<HTMLDivElement>(null);
   const scrollbarRef = useRef<HTMLDivElement>(null);
+  const scrollbarThumbRef = useRef<HTMLDivElement>(null);
   const scrollbarDragRef = useRef<ScrollbarDragGesture>({
     startX: 0,
     latestX: 0,
@@ -177,6 +217,7 @@ export function TimelineRenderer({
   const isZoomingRef = useRef(false);
   const didInitializeFocusRef = useRef(false);
   const timelineStartDateRef = useRef('');
+  const timelineEndDateRef = useRef('');
   const timelinePxPerDayRef = useRef(0);
   const leftExtensionReleaseFrameRef = useRef<number | null>(null);
   const rightExtensionReleaseFrameRef = useRef<number | null>(null);
@@ -185,13 +226,32 @@ export function TimelineRenderer({
   const wheelZoomLockedRef = useRef(false);
   const wheelZoomReleaseTimerRef = useRef<number | null>(null);
   const desiredScrollLeftRef = useRef(0);
-  const [scrollbar, setScrollbar] = useState<ScrollbarGeometry>(EMPTY_SCROLLBAR);
+  const scrollbarGeometryRef = useRef<TimelineScrollbarGeometry>(EMPTY_SCROLLBAR);
+  const dragEdgeExtensionGateRef = useRef<TimelineEdgeExtensionGate>(
+    EMPTY_TIMELINE_EDGE_EXTENSION_GATE,
+  );
+  const milestoneDragRef = useRef<MilestoneDragSession | null>(null);
+  const milestoneDragElementRef = useRef<HTMLSpanElement | null>(null);
+  const savingMilestoneIdsRef = useRef(new Set<string>());
+  const projectBarDragRef = useRef<ProjectBarMoveSession | ProjectBarResizeSession | null>(null);
+  const projectBarDragElementRef = useRef<HTMLSpanElement | null>(null);
+  const savingTimelineIdsRef = useRef(new Set<string>());
   const [zoomLevelIndex, setZoomLevelIndex] = useState(DEFAULT_TIMELINE_ZOOM_LEVEL_INDEX);
   const [timeScale, setTimeScale] = useState<TimelineTimeScale>(DEFAULT_TIMELINE_TIME_SCALE);
   const [scaleMenuOpen, setScaleMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
   const [quickCardTarget, setQuickCardTarget] = useState<MilestoneQuickCardTarget | null>(null);
+  const [milestoneDragSession, setMilestoneDragSession] = useState<MilestoneDragSession | null>(null);
+  const [savingMilestoneIds, setSavingMilestoneIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [projectBarDragSession, setProjectBarDragSession] = useState<
+    ProjectBarMoveSession | ProjectBarResizeSession | null
+  >(null);
+  const [savingTimelineIds, setSavingTimelineIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [quickCardController] = useState(
     () => createMilestoneQuickCardController(setQuickCardTarget),
   );
@@ -264,20 +324,27 @@ export function TimelineRenderer({
       .format(new Date(2000, month - 1, day));
   }, [locale, today]);
 
-  const updateScrollbar = useCallback(() => {
+  const publishScrollbarGeometry = useCallback((allowRangeRebase = false) => {
+    if (
+      !allowRangeRebase
+      && (pendingLeftExtensionRef.current || pendingRightExtensionRef.current)
+    ) return;
     const container = scrollRef.current;
     const track = scrollbarRef.current;
-    if (!container || !track) return;
-    const trackWidth = track.clientWidth;
-    const scrollRange = Math.max(container.scrollWidth - container.clientWidth, 0);
-    const thumbWidth = container.scrollWidth > 0
-      ? Math.max(44, Math.min(trackWidth, trackWidth * container.clientWidth / container.scrollWidth))
-      : trackWidth;
-    setScrollbar({
-      progress: scrollRange > 0 ? container.scrollLeft / scrollRange : 0,
-      thumbWidth,
-      trackWidth,
+    const thumb = scrollbarThumbRef.current;
+    if (!container || !track || !thumb) return;
+    const geometry = calculateTimelineScrollbarGeometry({
+      scrollLeft: container.scrollLeft,
+      scrollWidth: container.scrollWidth,
+      clientWidth: container.clientWidth,
+      trackWidth: track.clientWidth,
     });
+    scrollbarGeometryRef.current = geometry;
+    thumb.setAttribute(
+      'style',
+      `width: ${geometry.thumbWidth}px; left: ${geometry.thumbLeft}px;`,
+    );
+    thumb.setAttribute('aria-valuenow', String(Math.round(geometry.progress * 100)));
   }, []);
 
   const toggleProject = useCallback((projectId: string) => {
@@ -291,12 +358,14 @@ export function TimelineRenderer({
 
   useLayoutEffect(() => {
     timelineStartDateRef.current = timelineRange.startDate;
+    timelineEndDateRef.current = timelineRange.endDate;
     timelinePxPerDayRef.current = pxPerDay;
-  }, [pxPerDay, timelineRange.startDate]);
+  }, [pxPerDay, timelineRange.endDate, timelineRange.startDate]);
 
   const checkAndExtendTimeline = useCallback((
     currentScrollLeft: number,
     desiredScrollLeft = currentScrollLeft,
+    interaction: TimelineRangeExtensionInteraction = 'native-scroll',
   ) => {
     const container = scrollRef.current;
     if (
@@ -324,20 +393,21 @@ export function TimelineRenderer({
         prependWidth:
           timelineDaysBetween(nextStartDate, previousStartDate)
           * timelinePxPerDayRef.current,
+        interaction,
       };
       setTimelineRange((current) => ({ ...current, startDate: nextStartDate }));
     }
 
     if (edges.right && !isExtendingRightRef.current) {
+      const previousEndDate = timelineEndDateRef.current;
+      const nextEndDate = addTimelineMonths(previousEndDate, TIMELINE_RANGE_EXTENSION_MONTHS);
       isExtendingRightRef.current = true;
       pendingRightExtensionRef.current = {
         previousScrollLeft: currentScrollLeft,
         previousDesiredScrollLeft: desiredScrollLeft,
+        interaction,
       };
-      setTimelineRange((current) => ({
-        ...current,
-        endDate: addTimelineMonths(current.endDate, TIMELINE_RANGE_EXTENSION_MONTHS),
-      }));
+      setTimelineRange((current) => ({ ...current, endDate: nextEndDate }));
     }
   }, []);
 
@@ -370,9 +440,9 @@ export function TimelineRenderer({
     isNavigatingToTodayRef.current = true;
     desiredScrollLeftRef.current = targetScrollLeft;
     container.scrollTo({ left: targetScrollLeft, behavior });
-    updateScrollbar();
+    publishScrollbarGeometry();
     scheduleTodayNavigationRelease(behavior);
-  }, [header.coordinates, scheduleTodayNavigationRelease, updateScrollbar]);
+  }, [header.coordinates, publishScrollbarGeometry, scheduleTodayNavigationRelease]);
 
   const scrollToToday = useCallback(() => {
     const expandedRange = extendTimelineRangeToIncludeDate(
@@ -399,16 +469,17 @@ export function TimelineRenderer({
     const track = scrollbarRef.current;
     if (!container || !track) return;
     const rect = track.getBoundingClientRect();
-    const travel = Math.max(rect.width - scrollbar.thumbWidth, 0);
+    const thumbWidth = scrollbarGeometryRef.current.thumbWidth;
+    const travel = Math.max(rect.width - thumbWidth, 0);
     const progress = travel > 0
-      ? clamp((clientX - rect.left - scrollbar.thumbWidth / 2) / travel, 0, 1)
+      ? clamp((clientX - rect.left - thumbWidth / 2) / travel, 0, 1)
       : 0;
     const nextScrollLeft = progress * Math.max(container.scrollWidth - container.clientWidth, 0);
     desiredScrollLeftRef.current = nextScrollLeft;
     container.scrollLeft = nextScrollLeft;
-    updateScrollbar();
-    checkAndExtendTimeline(container.scrollLeft, nextScrollLeft);
-  }, [checkAndExtendTimeline, scrollbar.thumbWidth, updateScrollbar]);
+    publishScrollbarGeometry();
+    checkAndExtendTimeline(container.scrollLeft, nextScrollLeft, 'track-click');
+  }, [checkAndExtendTimeline, publishScrollbarGeometry]);
 
   const rebaseScrollbarDrag = useCallback((container: HTMLDivElement) => {
     const drag = scrollbarDragRef.current;
@@ -444,7 +515,7 @@ export function TimelineRenderer({
       Math.max(container.scrollWidth - container.clientWidth, 0),
     );
     rebaseScrollbarDrag(container);
-    updateScrollbar();
+    publishScrollbarGeometry(true);
 
     if (leftExtensionReleaseFrameRef.current !== null) {
       window.cancelAnimationFrame(leftExtensionReleaseFrameRef.current);
@@ -453,16 +524,12 @@ export function TimelineRenderer({
       pendingLeftExtensionRef.current = null;
       isExtendingLeftRef.current = false;
       leftExtensionReleaseFrameRef.current = null;
-      if (timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active) {
-        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
-      }
     });
   }, [
-    checkAndExtendTimeline,
     header.coordinates.canvasWidth,
     rebaseScrollbarDrag,
     timelineRange.startDate,
-    updateScrollbar,
+    publishScrollbarGeometry,
   ]);
 
   useLayoutEffect(() => {
@@ -470,18 +537,17 @@ export function TimelineRenderer({
     const pending = pendingRightExtensionRef.current;
     if (!container || !pending) return;
 
-    const interactionActive = timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active;
-    const desiredScrollLeft = interactionActive
+    const desiredScrollLeft = pending.interaction === 'scrollbar-drag'
       ? pending.previousDesiredScrollLeft
       : pending.previousScrollLeft;
     desiredScrollLeftRef.current = desiredScrollLeft;
     container.scrollLeft = clamp(
-      pending.previousScrollLeft,
+      desiredScrollLeft,
       0,
       Math.max(container.scrollWidth - container.clientWidth, 0),
     );
-    rebaseScrollbarDrag(container);
-    updateScrollbar();
+    if (pending.interaction === 'scrollbar-drag') rebaseScrollbarDrag(container);
+    publishScrollbarGeometry(true);
 
     if (rightExtensionReleaseFrameRef.current !== null) {
       window.cancelAnimationFrame(rightExtensionReleaseFrameRef.current);
@@ -490,16 +556,12 @@ export function TimelineRenderer({
       pendingRightExtensionRef.current = null;
       isExtendingRightRef.current = false;
       rightExtensionReleaseFrameRef.current = null;
-      if (timelinePanRef.current.isPointerDown || scrollbarDragRef.current.active) {
-        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
-      }
     });
   }, [
-    checkAndExtendTimeline,
     header.coordinates.canvasWidth,
     rebaseScrollbarDrag,
     timelineRange.endDate,
-    updateScrollbar,
+    publishScrollbarGeometry,
   ]);
 
   useLayoutEffect(() => {
@@ -531,20 +593,31 @@ export function TimelineRenderer({
       ? desiredScrollLeftRef.current
       : container.scrollLeft;
     if (!interactionActive) desiredScrollLeftRef.current = container.scrollLeft;
-    updateScrollbar();
+    if (
+      pendingLeftExtensionRef.current
+      || pendingRightExtensionRef.current
+      || isExtendingLeftRef.current
+      || isExtendingRightRef.current
+    ) return;
+    publishScrollbarGeometry();
+    if (
+      interactionActive
+      || milestoneDragRef.current
+      || projectBarDragRef.current
+    ) return;
     checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft);
-  }, [checkAndExtendTimeline, quickCardController, updateScrollbar]);
+  }, [checkAndExtendTimeline, publishScrollbarGeometry, quickCardController]);
 
-  useEffect(() => {
-    updateScrollbar();
+  useLayoutEffect(() => {
+    publishScrollbarGeometry();
     const container = scrollRef.current;
     const track = scrollbarRef.current;
     if (!container || !track || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(updateScrollbar);
+    const observer = new ResizeObserver(() => publishScrollbarGeometry());
     observer.observe(container);
     observer.observe(track);
     return () => observer.disconnect();
-  }, [displayRows, header.coordinates.canvasWidth, updateScrollbar]);
+  }, [displayRows, header.coordinates.canvasWidth, publishScrollbarGeometry]);
 
   const finishTimelinePan = useCallback((commitPendingPosition = true) => {
     const container = scrollRef.current;
@@ -566,8 +639,8 @@ export function TimelineRenderer({
           0,
           Math.max(container.scrollWidth - container.clientWidth, 0),
         );
-        updateScrollbar();
-        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft);
+        publishScrollbarGeometry();
+        checkAndExtendTimeline(container.scrollLeft, desiredScrollLeft, 'timeline-pan');
       }
     }
 
@@ -587,7 +660,7 @@ export function TimelineRenderer({
         // Pointer capture may already have been released by the browser.
       }
     }
-  }, [checkAndExtendTimeline, updateScrollbar]);
+  }, [checkAndExtendTimeline, publishScrollbarGeometry]);
 
   const requestTimelineZoom = useCallback((nextZoomLevelIndex: number, anchorClientX: number) => {
     const container = scrollRef.current;
@@ -601,6 +674,8 @@ export function TimelineRenderer({
       || normalizedZoomLevelIndex === zoomLevelIndex
       || timelinePanRef.current.isPointerDown
       || scrollbarDragRef.current.active
+      || milestoneDragRef.current
+      || projectBarDragRef.current
       || pendingZoomAnchorRef.current
       || isExtendingLeftRef.current
       || isExtendingRightRef.current
@@ -639,7 +714,7 @@ export function TimelineRenderer({
     desiredScrollLeftRef.current = nextScrollLeft;
     container.scrollLeft = nextScrollLeft;
     pendingZoomAnchorRef.current = null;
-    updateScrollbar();
+    publishScrollbarGeometry();
     if (zoomReleaseFrameRef.current !== null) {
       window.cancelAnimationFrame(zoomReleaseFrameRef.current);
     }
@@ -647,12 +722,17 @@ export function TimelineRenderer({
       isZoomingRef.current = false;
       zoomReleaseFrameRef.current = null;
     });
-  }, [header.coordinates, updateScrollbar]);
+  }, [header.coordinates, publishScrollbarGeometry]);
 
   const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
       if (!(event.ctrlKey || event.metaKey) || event.deltaY === 0) return;
       event.preventDefault();
-      if (wheelZoomLockedRef.current || timelinePanRef.current.isPointerDown) return;
+      if (
+        wheelZoomLockedRef.current
+        || timelinePanRef.current.isPointerDown
+        || milestoneDragRef.current
+        || projectBarDragRef.current
+      ) return;
 
       const container = event.currentTarget;
       const viewportRect = container.getBoundingClientRect();
@@ -736,7 +816,13 @@ export function TimelineRenderer({
 
     const container = scrollRef.current;
     const pan = timelinePanRef.current;
-    if (!container || pan.isPointerDown || scrollbarDragRef.current.active) return;
+    if (
+      !container
+      || pan.isPointerDown
+      || scrollbarDragRef.current.active
+      || milestoneDragRef.current
+      || projectBarDragRef.current
+    ) return;
 
     quickCardController.closeQuickCardOnInteractionStart('timeline-pan');
 
@@ -782,10 +868,14 @@ export function TimelineRenderer({
         0,
         Math.max(container.scrollWidth - container.clientWidth, 0),
       );
-      updateScrollbar();
-      checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
+      publishScrollbarGeometry();
+      checkAndExtendTimeline(
+        container.scrollLeft,
+        desiredScrollLeftRef.current,
+        'timeline-pan',
+      );
     });
-  }, [checkAndExtendTimeline, updateScrollbar]);
+  }, [checkAndExtendTimeline, publishScrollbarGeometry]);
 
   const handleTimelinePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (timelinePanRef.current.activePointerId === event.pointerId) finishTimelinePan();
@@ -814,6 +904,407 @@ export function TimelineRenderer({
       milestones: [milestone],
     });
   }, [quickCardController, quickCardTarget]);
+
+  const extendTimelineForDragPointer = useCallback((clientX: number) => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const edgeThreshold = container.clientWidth * TIMELINE_RANGE_EDGE_THRESHOLD_RATIO;
+    let direction: TimelineEdgeDirection | null = null;
+    if (clientX - rect.left < edgeThreshold) direction = 'left';
+    else if (rect.right - clientX < edgeThreshold) direction = 'right';
+    const boundary = direction === 'left'
+      ? timelineStartDateRef.current
+      : direction === 'right'
+        ? timelineRange.endDate
+        : null;
+    const result = evaluateTimelineEdgeExtension(
+      dragEdgeExtensionGateRef.current,
+      clientX,
+      direction,
+      boundary,
+    );
+    dragEdgeExtensionGateRef.current = result.gate;
+    if (!result.shouldExtend) return;
+    const interaction: TimelineRangeExtensionInteraction = milestoneDragRef.current
+      ? 'milestone-drag'
+      : projectBarDragRef.current?.type === 'project-bar-move'
+        ? 'project-move'
+        : 'project-resize';
+    if (direction === 'left') {
+      checkAndExtendTimeline(container.scrollLeft, -edgeThreshold, interaction);
+    } else if (direction === 'right') {
+      checkAndExtendTimeline(
+        container.scrollLeft,
+        container.scrollWidth + edgeThreshold,
+        interaction,
+      );
+    }
+  }, [checkAndExtendTimeline, timelineRange.endDate]);
+
+  const releaseMilestonePointer = useCallback((pointerId: number) => {
+    const element = milestoneDragElementRef.current;
+    milestoneDragElementRef.current = null;
+    if (!element?.hasPointerCapture?.(pointerId)) return;
+    try {
+      element.releasePointerCapture(pointerId);
+    } catch {
+      // Pointer capture may already have been released by the browser.
+    }
+  }, []);
+
+  const cancelMilestoneDrag = useCallback((pointerId?: number) => {
+    const session = milestoneDragRef.current;
+    if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) return;
+    milestoneDragRef.current = null;
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    setMilestoneDragSession(null);
+    releaseMilestonePointer(session.pointerId);
+  }, [releaseMilestonePointer]);
+
+  const completeMilestoneDrag = useCallback(async (pointerId: number) => {
+    const session = milestoneDragRef.current;
+    if (!session || session.pointerId !== pointerId) return;
+
+    milestoneDragRef.current = null;
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    releaseMilestonePointer(pointerId);
+    const changed = session.previewDate !== session.originalDate;
+    if (!session.hasExceededDragThreshold || !changed || !onMoveMilestone) {
+      setMilestoneDragSession(null);
+      return;
+    }
+
+    if (savingMilestoneIdsRef.current.has(session.sourceEntityId)) {
+      setMilestoneDragSession(null);
+      return;
+    }
+    savingMilestoneIdsRef.current.add(session.sourceEntityId);
+    setSavingMilestoneIds(new Set(savingMilestoneIdsRef.current));
+
+    try {
+      await onMoveMilestone({
+        milestoneId: session.sourceEntityId,
+        projectId: session.projectId,
+        timelineId: session.timelineId,
+        expectedDate: session.originalDate,
+        date: session.previewDate,
+      });
+    } catch {
+      // The save-first runtime keeps the graph unchanged; clearing preview is the rollback.
+    } finally {
+      savingMilestoneIdsRef.current.delete(session.sourceEntityId);
+      setSavingMilestoneIds(new Set(savingMilestoneIdsRef.current));
+      setMilestoneDragSession(null);
+    }
+  }, [onMoveMilestone, releaseMilestonePointer]);
+
+  const handleMilestoneDragPointerDown = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+    milestone: Parameters<typeof createMilestoneDragSession>[0],
+  ) => {
+    if (
+      event.button !== 0
+      || !event.isPrimary
+      || !onMoveMilestone
+      || milestoneDragRef.current
+      || projectBarDragRef.current
+      || timelinePanRef.current.isPointerDown
+      || scrollbarDragRef.current.active
+      || savingMilestoneIdsRef.current.has(milestone.id)
+    ) return;
+
+    event.stopPropagation();
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    const session = createMilestoneDragSession(milestone, event.pointerId, event.clientX);
+    milestoneDragRef.current = session;
+    milestoneDragElementRef.current = event.currentTarget;
+    setMilestoneDragSession(session);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      cancelMilestoneDrag(event.pointerId);
+    }
+  }, [cancelMilestoneDrag, onMoveMilestone]);
+
+  const handleMilestoneDragPointerMove = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+  ) => {
+    const current = milestoneDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+
+    event.stopPropagation();
+    const next = updateMilestoneDragPreview(current, event.clientX, header.coordinates);
+    if (!current.hasExceededDragThreshold && next.hasExceededDragThreshold) {
+      quickCardController.closeQuickCardOnInteractionStart('milestone-drag');
+      window.getSelection()?.removeAllRanges();
+    }
+    milestoneDragRef.current = next;
+    setMilestoneDragSession(next);
+    if (!next.hasExceededDragThreshold) return;
+
+    event.preventDefault();
+    extendTimelineForDragPointer(event.clientX);
+  }, [extendTimelineForDragPointer, header.coordinates, quickCardController]);
+
+  const handleMilestoneDragPointerUp = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+  ) => {
+    if (milestoneDragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    if (milestoneDragRef.current.hasExceededDragThreshold) event.preventDefault();
+    void completeMilestoneDrag(event.pointerId);
+  }, [completeMilestoneDrag]);
+
+  const handleMilestoneDragPointerCancel = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+  ) => {
+    if (milestoneDragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    cancelMilestoneDrag(event.pointerId);
+  }, [cancelMilestoneDrag]);
+
+  useEffect(() => {
+    const handlePointerUp = (event: PointerEvent) => {
+      if (milestoneDragRef.current?.pointerId === event.pointerId) {
+        void completeMilestoneDrag(event.pointerId);
+      }
+    };
+    const handlePointerCancel = (event: PointerEvent) => cancelMilestoneDrag(event.pointerId);
+    const handleBlur = () => cancelMilestoneDrag();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !milestoneDragRef.current) return;
+      event.preventDefault();
+      cancelMilestoneDrag();
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('keydown', handleKeyDown);
+      cancelMilestoneDrag();
+    };
+  }, [cancelMilestoneDrag, completeMilestoneDrag]);
+
+  const releaseProjectBarPointer = useCallback((pointerId: number) => {
+    const element = projectBarDragElementRef.current;
+    projectBarDragElementRef.current = null;
+    if (!element?.hasPointerCapture?.(pointerId)) return;
+    try {
+      element.releasePointerCapture(pointerId);
+    } catch {
+      // Pointer capture may already have been released by the browser.
+    }
+  }, []);
+
+  const cancelProjectBarDrag = useCallback((pointerId?: number) => {
+    const session = projectBarDragRef.current;
+    if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) return;
+    projectBarDragRef.current = null;
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    setProjectBarDragSession(null);
+    releaseProjectBarPointer(session.pointerId);
+  }, [releaseProjectBarPointer]);
+
+  const completeProjectBarDrag = useCallback(async (pointerId: number) => {
+    const session = projectBarDragRef.current;
+    if (!session || session.pointerId !== pointerId) return;
+    projectBarDragRef.current = null;
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    releaseProjectBarPointer(pointerId);
+
+    const isMove = session.type === 'project-bar-move';
+    const side = session.type === 'project-bar-resize-start' ? 'start' : 'end';
+    const changed = isMove
+      ? session.deltaDays !== 0
+      : (side === 'start'
+          ? session.previewStartDate !== session.originalStartDate
+          : session.previewEndDate !== session.originalEndDate);
+    const canCommit = isMove ? Boolean(onMoveProjectTimeline) : Boolean(onResizeProjectTimeline);
+    if (!session.hasExceededDragThreshold || !changed || !canCommit) {
+      setProjectBarDragSession(null);
+      return;
+    }
+
+    const affectedMilestoneIds = isMove
+      ? session.originalMilestones.map((milestone) => milestone.id)
+      : [];
+    if (
+      savingTimelineIdsRef.current.has(session.sourceEntityId)
+      || affectedMilestoneIds.some((id) => savingMilestoneIdsRef.current.has(id))
+    ) {
+      setProjectBarDragSession(null);
+      return;
+    }
+    savingTimelineIdsRef.current.add(session.sourceEntityId);
+    for (const id of affectedMilestoneIds) savingMilestoneIdsRef.current.add(id);
+    setSavingTimelineIds(new Set(savingTimelineIdsRef.current));
+    setSavingMilestoneIds(new Set(savingMilestoneIdsRef.current));
+
+    try {
+      if (isMove) {
+        await onMoveProjectTimeline!({
+          timelineId: session.sourceEntityId,
+          projectId: session.projectId,
+          expectedStartDate: session.originalStartDate,
+          expectedEndDate: session.originalEndDate,
+          deltaDays: session.deltaDays,
+          expectedMilestones: session.originalMilestones,
+        });
+      } else {
+        await onResizeProjectTimeline!({
+          timelineId: session.sourceEntityId,
+          projectId: session.projectId,
+          expectedStartDate: session.originalStartDate,
+          expectedEndDate: session.originalEndDate,
+          side,
+          date: side === 'start' ? session.previewStartDate : session.previewEndDate,
+        });
+      }
+    } catch {
+      // The save-first runtime keeps every affected entity unchanged on failure.
+    } finally {
+      savingTimelineIdsRef.current.delete(session.sourceEntityId);
+      for (const id of affectedMilestoneIds) savingMilestoneIdsRef.current.delete(id);
+      setSavingTimelineIds(new Set(savingTimelineIdsRef.current));
+      setSavingMilestoneIds(new Set(savingMilestoneIdsRef.current));
+      setProjectBarDragSession(null);
+    }
+  }, [onMoveProjectTimeline, onResizeProjectTimeline, releaseProjectBarPointer]);
+
+  const beginProjectBarSession = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+    session: ProjectBarMoveSession | ProjectBarResizeSession,
+  ) => {
+    event.stopPropagation();
+    dragEdgeExtensionGateRef.current = EMPTY_TIMELINE_EDGE_EXTENSION_GATE;
+    projectBarDragRef.current = session;
+    projectBarDragElementRef.current = event.currentTarget;
+    setProjectBarDragSession(session);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      cancelProjectBarDrag(event.pointerId);
+    }
+  }, [cancelProjectBarDrag]);
+
+  const handleProjectBarPointerDown = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+    timeline: Parameters<typeof createProjectBarMoveSession>[0],
+    milestones: Parameters<typeof createProjectBarMoveSession>[1],
+  ) => {
+    if (
+      event.button !== 0
+      || !event.isPrimary
+      || !onMoveProjectTimeline
+      || event.target instanceof Element && event.target.closest('[data-project-resize-handle]')
+      || projectBarDragRef.current
+      || milestoneDragRef.current
+      || timelinePanRef.current.isPointerDown
+      || scrollbarDragRef.current.active
+      || savingTimelineIdsRef.current.has(timeline.id)
+      || milestones.some((milestone) => savingMilestoneIdsRef.current.has(milestone.id))
+    ) return;
+    beginProjectBarSession(
+      event,
+      createProjectBarMoveSession(timeline, milestones, event.pointerId, event.clientX),
+    );
+  }, [beginProjectBarSession, onMoveProjectTimeline]);
+
+  const handleProjectBarResizePointerDown = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+    timeline: Parameters<typeof createProjectBarResizeSession>[0],
+    side: 'start' | 'end',
+  ) => {
+    if (
+      event.button !== 0
+      || !event.isPrimary
+      || !onResizeProjectTimeline
+      || projectBarDragRef.current
+      || milestoneDragRef.current
+      || timelinePanRef.current.isPointerDown
+      || scrollbarDragRef.current.active
+      || savingTimelineIdsRef.current.has(timeline.id)
+    ) return;
+    event.preventDefault();
+    beginProjectBarSession(
+      event,
+      createProjectBarResizeSession(timeline, side, event.pointerId, event.clientX),
+    );
+  }, [beginProjectBarSession, onResizeProjectTimeline]);
+
+  const handleProjectBarPointerMove = useCallback((
+    event: ReactPointerEvent<HTMLSpanElement>,
+  ) => {
+    const current = projectBarDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    const next = current.type === 'project-bar-move'
+      ? updateProjectBarMovePreview(current, event.clientX, header.coordinates)
+      : updateProjectBarResizePreview(current, event.clientX, header.coordinates);
+    if (!current.hasExceededDragThreshold && next.hasExceededDragThreshold) {
+      quickCardController.closeQuickCardOnInteractionStart(
+        next.type === 'project-bar-move' ? 'project-drag' : 'project-resize',
+      );
+      window.getSelection()?.removeAllRanges();
+    }
+    projectBarDragRef.current = next;
+    setProjectBarDragSession(next);
+    if (!next.hasExceededDragThreshold) return;
+    event.preventDefault();
+    extendTimelineForDragPointer(event.clientX);
+  }, [extendTimelineForDragPointer, header.coordinates, quickCardController]);
+
+  const handleProjectBarPointerUp = useCallback((event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (projectBarDragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    if (projectBarDragRef.current.hasExceededDragThreshold) event.preventDefault();
+    void completeProjectBarDrag(event.pointerId);
+  }, [completeProjectBarDrag]);
+
+  const handleProjectBarPointerCancel = useCallback((event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (projectBarDragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    cancelProjectBarDrag(event.pointerId);
+  }, [cancelProjectBarDrag]);
+
+  useEffect(() => {
+    const handlePointerUp = (event: PointerEvent) => {
+      if (projectBarDragRef.current?.pointerId === event.pointerId) {
+        void completeProjectBarDrag(event.pointerId);
+      }
+    };
+    const handlePointerCancel = (event: PointerEvent) => cancelProjectBarDrag(event.pointerId);
+    const handleBlur = () => cancelProjectBarDrag();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !projectBarDragRef.current) return;
+      event.preventDefault();
+      cancelProjectBarDrag();
+    };
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('keydown', handleKeyDown);
+      cancelProjectBarDrag();
+    };
+  }, [cancelProjectBarDrag, completeProjectBarDrag]);
+
+  const projectMoveMilestonePreviewDates = useMemo(() => {
+    if (projectBarDragSession?.type !== 'project-bar-move') return undefined;
+    return new Map(projectBarDragSession.originalMilestones.map((milestone) => [
+      milestone.id,
+      addTimelineDays(milestone.date, projectBarDragSession.deltaDays),
+    ]));
+  }, [projectBarDragSession]);
 
   return (
     <section
@@ -1049,7 +1540,26 @@ export function TimelineRenderer({
                   style={{ height: rowsHeight }}
                 >
                 {displayRows.map((row, index) => {
-                  const geometry = getTimelineBarGeometry(row.timeline, header.coordinates);
+                  const activeBarSession = projectBarDragSession?.sourceEntityId
+                    === row.timeline.timelineId
+                    ? projectBarDragSession
+                    : null;
+                  const presentedTimeline = activeBarSession ? {
+                    ...row.timeline,
+                    startDate: activeBarSession.previewStartDate,
+                    endDate: activeBarSession.previewEndDate,
+                  } : row.timeline;
+                  const geometry = getTimelineBarGeometry(presentedTimeline, header.coordinates);
+                  const isBarMoving = activeBarSession?.type === 'project-bar-move'
+                    && activeBarSession.hasExceededDragThreshold;
+                  const isBarResizing = activeBarSession?.type !== 'project-bar-move'
+                    && activeBarSession?.hasExceededDragThreshold;
+                  const timelineIdentity = {
+                    id: row.timeline.timelineId,
+                    projectId: row.timeline.projectId,
+                    startDate: row.timeline.startDate,
+                    endDate: row.timeline.endDate,
+                  };
                   return (
                     <div
                       key={row.key}
@@ -1065,18 +1575,64 @@ export function TimelineRenderer({
                         <span
                           data-testid={`timeline-bar-${row.timeline.timelineId}`}
                           data-no-timeline-pan
+                          data-project-bar-moving={isBarMoving || undefined}
+                          data-project-bar-resizing={isBarResizing || undefined}
+                          data-preview-start-date={activeBarSession?.previewStartDate}
+                          data-preview-end-date={activeBarSession?.previewEndDate}
+                          aria-busy={savingTimelineIds.has(row.timeline.timelineId) || undefined}
                           className={`timeline-lane__bar${
                             hoveredTimelineId === row.timeline.timelineId ? ' is-project-hovered' : ''
+                          }${isBarMoving ? ' is-dragging' : ''}${isBarResizing ? ' is-resizing' : ''}${
+                            savingTimelineIds.has(row.timeline.timelineId) ? ' is-saving' : ''
                           }`}
                           style={geometry}
                           title={`${row.timeline.label}: ${row.timeline.startDate} — ${row.timeline.endDate}`}
-                        />
+                          onPointerDown={(event) => handleProjectBarPointerDown(
+                            event,
+                            timelineIdentity,
+                            row.timeline.milestones,
+                          )}
+                          onPointerMove={handleProjectBarPointerMove}
+                          onPointerUp={handleProjectBarPointerUp}
+                          onPointerCancel={handleProjectBarPointerCancel}
+                          onLostPointerCapture={handleProjectBarPointerCancel}
+                        >
+                          {(['start', 'end'] as const).map((side) => (
+                            <span
+                              key={side}
+                              data-project-resize-handle={side}
+                              data-no-timeline-pan
+                              className={`timeline-lane__resize-handle timeline-lane__resize-handle--${side}${
+                                activeBarSession?.type === `project-bar-resize-${side}` ? ' is-active' : ''
+                              }`}
+                              onPointerDown={(event) => handleProjectBarResizePointerDown(
+                                event,
+                                timelineIdentity,
+                                side,
+                              )}
+                              onPointerMove={handleProjectBarPointerMove}
+                              onPointerUp={handleProjectBarPointerUp}
+                              onPointerCancel={handleProjectBarPointerCancel}
+                              onLostPointerCapture={handleProjectBarPointerCancel}
+                              aria-hidden="true"
+                            />
+                          ))}
+                        </span>
                       ) : null}
                       <TimelineMilestones
                         milestones={row.timeline.milestones}
                         coordinates={header.coordinates}
                         onPreviewEnter={handleMilestonePreviewEnter}
                         onPreviewLeave={(milestoneId) => quickCardController.leave(milestoneId)}
+                        dragSession={milestoneDragSession?.timelineId === row.timeline.timelineId
+                          ? milestoneDragSession
+                          : null}
+                        savingMilestoneIds={savingMilestoneIds}
+                        onDragPointerDown={handleMilestoneDragPointerDown}
+                        onDragPointerMove={handleMilestoneDragPointerMove}
+                        onDragPointerUp={handleMilestoneDragPointerUp}
+                        onDragPointerCancel={handleMilestoneDragPointerCancel}
+                        previewDatesByMilestoneId={projectMoveMilestonePreviewDates}
                       />
                     </div>
                   );
@@ -1100,13 +1656,9 @@ export function TimelineRenderer({
               aria-label="Timeline horizontal scroll"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={Math.round(scrollbar.progress * 100)}
               className="timeline-custom-scrollbar__thumb"
               data-testid="timeline-custom-scrollbar-thumb"
-              style={{
-                width: scrollbar.thumbWidth,
-                left: scrollbar.progress * Math.max(scrollbar.trackWidth - scrollbar.thumbWidth, 0),
-              }}
+              ref={scrollbarThumbRef}
               onPointerDown={(event) => {
                 const container = scrollRef.current;
                 if (!container) return;
@@ -1126,7 +1678,8 @@ export function TimelineRenderer({
                 const drag = scrollbarDragRef.current;
                 if (!container || !track || !drag.active) return;
                 drag.latestX = event.clientX;
-                const travel = track.getBoundingClientRect().width - scrollbar.thumbWidth;
+                const travel = track.getBoundingClientRect().width
+                  - scrollbarGeometryRef.current.thumbWidth;
                 if (travel <= 0) return;
                 const nextScrollLeft = drag.startScrollLeft
                   + ((event.clientX - drag.startX) / travel) * drag.startScrollRange;
@@ -1136,15 +1689,19 @@ export function TimelineRenderer({
                   0,
                   Math.max(container.scrollWidth - container.clientWidth, 0),
                 );
-                updateScrollbar();
-                checkAndExtendTimeline(container.scrollLeft, nextScrollLeft);
+                publishScrollbarGeometry();
+                checkAndExtendTimeline(container.scrollLeft, nextScrollLeft, 'scrollbar-drag');
               }}
               onPointerUp={(event) => {
                 const container = scrollRef.current;
                 scrollbarDragRef.current.active = false;
                 desiredScrollLeftRef.current = container?.scrollLeft ?? 0;
                 if (container) {
-                  checkAndExtendTimeline(container.scrollLeft, desiredScrollLeftRef.current);
+                  checkAndExtendTimeline(
+                    container.scrollLeft,
+                    desiredScrollLeftRef.current,
+                    'scrollbar-drag',
+                  );
                 }
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                   event.currentTarget.releasePointerCapture(event.pointerId);

@@ -6,6 +6,13 @@ import {
   loadProjectGraph,
   type ProjectGraphMutation,
 } from '../application/projectGraphRuntime';
+import { moveMilestone, type MoveMilestoneCommand } from '../application/milestoneCommands';
+import {
+  moveProjectTimeline,
+  resizeProjectTimeline,
+  type MoveProjectTimelineCommand,
+  type ResizeProjectTimelineCommand,
+} from '../application/timelineCommands';
 import type { ProjectGraph } from '../domain/types';
 import { InMemoryProjectManagementRepository } from '../repository/InMemoryProjectManagementRepository';
 import type { ProjectManagementRepository } from '../repository/ProjectManagementRepository';
@@ -101,6 +108,15 @@ const runtimeStore = createProjectManagementStore(
 
 export const initializeProjectManagement = runtimeStore.initialize;
 export const commitProjectManagementGraph = runtimeStore.commitGraph;
+export const moveProjectManagementMilestone = (command: MoveMilestoneCommand) => (
+  runtimeStore.commitGraph(moveMilestone(command))
+);
+export const moveProjectManagementTimeline = (command: MoveProjectTimelineCommand) => (
+  runtimeStore.commitGraph(moveProjectTimeline(command))
+);
+export const resizeProjectManagementTimeline = (command: ResizeProjectTimelineCommand) => (
+  runtimeStore.commitGraph(resizeProjectTimeline(command))
+);
 
 export function useProjectManagementStore<T>(
   selector: (state: ProjectManagementState) => T,

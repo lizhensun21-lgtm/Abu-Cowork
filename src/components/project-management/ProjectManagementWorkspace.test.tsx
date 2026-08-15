@@ -8,6 +8,9 @@ import ProjectManagementWorkspace from './ProjectManagementWorkspace';
 
 const runtime = vi.hoisted(() => ({
   initialize: vi.fn<() => Promise<void>>(),
+  moveMilestone: vi.fn<() => Promise<void>>(),
+  moveTimeline: vi.fn<() => Promise<void>>(),
+  resizeTimeline: vi.fn<() => Promise<void>>(),
   state: {
     graph: {
       projects: [],
@@ -24,6 +27,9 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock('@/project-management/state', () => ({
   initializeProjectManagement: runtime.initialize,
+  moveProjectManagementMilestone: runtime.moveMilestone,
+  moveProjectManagementTimeline: runtime.moveTimeline,
+  resizeProjectManagementTimeline: runtime.resizeTimeline,
   useProjectManagementStore: <T,>(selector: (state: ProjectManagementState) => T) => (
     selector(runtime.state)
   ),
@@ -33,6 +39,9 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
   beforeEach(() => {
     setLanguage('en-US');
     runtime.initialize.mockReset().mockResolvedValue(undefined);
+    runtime.moveMilestone.mockReset().mockResolvedValue(undefined);
+    runtime.moveTimeline.mockReset().mockResolvedValue(undefined);
+    runtime.resizeTimeline.mockReset().mockResolvedValue(undefined);
     runtime.state = {
       graph: {
         projects: [],
