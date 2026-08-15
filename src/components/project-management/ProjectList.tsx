@@ -54,12 +54,16 @@ export function ProjectListRow({
   hovered,
   onToggleExpanded,
   onHoverTimeline,
+  onOpenProject,
+  onOpenTimeline,
 }: {
   row: ProjectOverviewDisplayRow;
   expanded: boolean;
   hovered: boolean;
   onToggleExpanded: (projectId: string) => void;
   onHoverTimeline: (timelineId: string | null) => void;
+  onOpenProject: (projectId: string) => void;
+  onOpenTimeline: (timelineId: string) => void;
 }) {
   const { project, timeline } = row;
   const summary = project.milestoneSummary;
@@ -79,16 +83,26 @@ export function ProjectListRow({
     >
       <div className="project-label-identity">
         {row.isProjectPrimaryRow ? (
-          <div className="project-label-button project-label-button--main">
+          <button
+            type="button"
+            className="project-label-button project-label-button--main"
+            data-no-timeline-pan
+            onClick={() => onOpenProject(project.projectId)}
+          >
             <Box size={16} className="project-icon project-icon--parent" aria-hidden="true" />
             <span className="project-label-text" title={label}>{label}</span>
-          </div>
+          </button>
         ) : (
-          <div className="project-label-button project-label-button--child">
+          <button
+            type="button"
+            className="project-label-button project-label-button--child"
+            data-no-timeline-pan
+            onClick={() => onOpenTimeline(timeline.timelineId)}
+          >
             <span className="tree-branch" aria-hidden="true" />
             <Box size={15} className="project-icon" aria-hidden="true" />
             <span className="project-label-text" title={label}>{label}</span>
-          </div>
+          </button>
         )}
       </div>
       <div className="project-label-meta">

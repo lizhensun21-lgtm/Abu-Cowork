@@ -14,12 +14,21 @@ export { selectProjectOrder } from './projectOrder';
 export {
   MilestoneMutationConflictError,
   moveMilestone,
+  updateMilestone,
   type MoveMilestoneCommand,
+  type UpdateMilestoneCommand,
 } from './milestoneCommands';
+export {
+  ProjectMutationConflictError,
+  updateProject,
+  type UpdateProjectCommand,
+} from './projectCommands';
 export {
   moveProjectTimeline,
   ProjectTimelineMutationConflictError,
   resizeProjectTimeline,
+  updateProjectTimeline,
   type MoveProjectTimelineCommand,
   type ResizeProjectTimelineCommand,
+  type UpdateProjectTimelineCommand,
 } from './timelineCommands';

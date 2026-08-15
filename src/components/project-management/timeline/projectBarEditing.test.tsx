@@ -132,6 +132,17 @@ describe('Project Bar Move integration', () => {
     expect(onMoveProjectTimeline).not.toHaveBeenCalled();
   });
 
+  it('suppresses the click synthesized after Project Bar Move so no Drawer opens', async () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-15" onMoveProjectTimeline={vi.fn(async () => undefined)} />);
+    const bar = capture(screen.getByTestId('timeline-bar-yd'));
+    down(bar);
+    fireEvent.pointerMove(bar, { pointerId: 21, isPrimary: true, clientX: 146 });
+    fireEvent.pointerUp(bar, { pointerId: 21, isPrimary: true, clientX: 146 });
+    fireEvent.click(bar);
+    await act(async () => undefined);
+    expect(screen.queryByTestId('pm-drawer')).not.toBeInTheDocument();
+  });
+
   it('keeps Cluster membership and renders no ghost or duplicate Marker', () => {
     render(<TimelineRenderer graph={graphFixture(true)} today="2026-08-15" onMoveProjectTimeline={vi.fn(async () => undefined)} />);
     const bar = capture(screen.getByTestId('timeline-bar-yd'));
@@ -228,6 +239,17 @@ describe('Project Bar Resize integration', () => {
     await act(async () => undefined);
     expect(onMoveProjectTimeline).not.toHaveBeenCalled();
     expect(onResizeProjectTimeline).toHaveBeenCalledWith(expect.objectContaining({ side, date }));
+  });
+
+  it('suppresses the click synthesized after Resize so no Timeline Drawer opens', async () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-15" onResizeProjectTimeline={vi.fn(async () => undefined)} />);
+    const handle = capture(document.querySelector<HTMLElement>('[data-testid="timeline-bar-yd"] [data-project-resize-handle="start"]')!);
+    down(handle);
+    fireEvent.pointerMove(handle, { pointerId: 21, isPrimary: true, clientX: 146 });
+    fireEvent.pointerUp(handle, { pointerId: 21, isPrimary: true, clientX: 146 });
+    fireEvent.click(handle);
+    await act(async () => undefined);
+    expect(screen.queryByTestId('pm-drawer')).not.toBeInTheDocument();
   });
 
   it('keeps every Milestone date fixed and clamps crossing without swapping', () => {

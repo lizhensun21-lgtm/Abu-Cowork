@@ -11,6 +11,9 @@ const runtime = vi.hoisted(() => ({
   moveMilestone: vi.fn<() => Promise<void>>(),
   moveTimeline: vi.fn<() => Promise<void>>(),
   resizeTimeline: vi.fn<() => Promise<void>>(),
+  updateProject: vi.fn<() => Promise<void>>(),
+  updateTimeline: vi.fn<() => Promise<void>>(),
+  updateMilestone: vi.fn<() => Promise<void>>(),
   state: {
     graph: {
       projects: [],
@@ -30,6 +33,9 @@ vi.mock('@/project-management/state', () => ({
   moveProjectManagementMilestone: runtime.moveMilestone,
   moveProjectManagementTimeline: runtime.moveTimeline,
   resizeProjectManagementTimeline: runtime.resizeTimeline,
+  updateProjectManagementProject: runtime.updateProject,
+  updateProjectManagementTimeline: runtime.updateTimeline,
+  updateProjectManagementMilestone: runtime.updateMilestone,
   useProjectManagementStore: <T,>(selector: (state: ProjectManagementState) => T) => (
     selector(runtime.state)
   ),
@@ -42,6 +48,9 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     runtime.moveMilestone.mockReset().mockResolvedValue(undefined);
     runtime.moveTimeline.mockReset().mockResolvedValue(undefined);
     runtime.resizeTimeline.mockReset().mockResolvedValue(undefined);
+    runtime.updateProject.mockReset().mockResolvedValue(undefined);
+    runtime.updateTimeline.mockReset().mockResolvedValue(undefined);
+    runtime.updateMilestone.mockReset().mockResolvedValue(undefined);
     runtime.state = {
       graph: {
         projects: [],

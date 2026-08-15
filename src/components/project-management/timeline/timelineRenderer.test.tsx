@@ -788,6 +788,59 @@ describe('read-only Project Overview timeline', () => {
     expect(second.querySelector('.milestone-node__marker-hit')).not.toBeInTheDocument();
   });
 
+  it('keeps over-threshold labels full-width and gives the later marker deterministic priority', () => {
+    const graph = graphFixture();
+    graph.milestones = [
+      { ...graph.milestones[0], id: 'g3', title: 'Vehicle validation', code: 'G3', date: '2026-04-01' },
+      { ...graph.milestones[0], id: 'g4', title: 'Release approval', code: 'G4', date: '2026-04-07' },
+    ];
+    const before = structuredClone(graph);
+    render(<TimelineRenderer graph={graph} today="2026-08-13" />);
+
+    const earlier = document.querySelector<HTMLElement>('[data-milestone-id="g3"]')!;
+    const later = document.querySelector<HTMLElement>('[data-milestone-id="g4"]')!;
+    const earlierLabel = earlier.querySelector<HTMLElement>('.milestone-node__label')!;
+    const laterLabel = later.querySelector<HTMLElement>('.milestone-node__label')!;
+    const markerDistance = Number.parseFloat(later.style.left) - Number.parseFloat(earlier.style.left);
+    const combinedHalfWidth = (
+      Number.parseFloat(earlierLabel.style.width) + Number.parseFloat(laterLabel.style.width)
+    ) / 2;
+
+    expect(markerDistance).toBeGreaterThan(22);
+    expect(markerDistance).toBeLessThan(combinedHalfWidth);
+    expect(earlier).toHaveAttribute('data-milestone-cluster-size', '1');
+    expect(later).toHaveAttribute('data-milestone-cluster-size', '1');
+    expect(earlierLabel.style.width)
+      .toBe(earlierLabel.querySelector<HTMLElement>('.milestone-node__label-text')?.style.width);
+    expect(laterLabel.style.width)
+      .toBe(laterLabel.querySelector<HTMLElement>('.milestone-node__label-text')?.style.width);
+    expect(Number(earlier.dataset.milestoneLabelStackOrder))
+      .toBeLessThan(Number(later.dataset.milestoneLabelStackOrder));
+    expect(earlierLabel).toHaveClass('is-covered-by-next');
+    expect(laterLabel).not.toHaveClass('is-covered-by-next');
+    expect(Number.parseFloat(earlierLabel.style.getPropertyValue('--milestone-label-covered-width')))
+      .toBeGreaterThan(0);
+    expect(earlier.querySelector('.milestone-node__marker-hit')).toBeInTheDocument();
+    expect(later.querySelector('.milestone-node__marker-hit')).toBeInTheDocument();
+    expect(document.querySelector('.timeline-lane__bar')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-current-month-highlight-body')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-today-line-body')).toBeInTheDocument();
+
+    const css = readFileSync(resolve('src/components/project-management/projectOverview.css'), 'utf8');
+    const labelRule = css.match(
+      /\[data-project-overview-workspace\] \.milestone-node__label \{(?<body>[\s\S]*?)\n\}/u,
+    )?.groups?.body ?? '';
+    expect(labelRule).toContain('z-index: var(--milestone-label-stack-z, 4)');
+    expect(labelRule).not.toMatch(/\bbackground(?:-color)?:/u);
+    expect(css).toMatch(/\.milestone-node__label\.is-covered-by-next\s*\{[\s\S]*?-webkit-mask-image:\s*linear-gradient/u);
+    expect(css).toMatch(/\.milestone-node__label\.is-covered-by-next\s*\{[\s\S]*?\n\s*mask-image:\s*linear-gradient/u);
+    expect(css).toMatch(/\.milestone-node__label-text\s*\{[\s\S]*?opacity:\s*var\(--milestone-status-opacity\)/u);
+    expect(css).toMatch(/\.milestone-node__marker-hit\s*\{[\s\S]*?z-index:\s*32/u);
+    expect(css).toMatch(/\.timeline-lane__bar\s*\{[\s\S]*?z-index:\s*2/u);
+    expect(graph).toEqual(before);
+  });
+
   it('recomputes cluster membership from screen distance when zoom changes', () => {
     const graph = graphFixture();
     graph.milestones = [

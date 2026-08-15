@@ -144,6 +144,17 @@ describe('Timeline Milestone drag integration', () => {
     }
   });
 
+  it('suppresses the click synthesized after Milestone Drag so no Drawer opens', async () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-14" onMoveMilestone={vi.fn(async () => undefined)} />);
+    const node = marker();
+    pointerDown(node);
+    fireEvent.pointerMove(node, { pointerId: 11, isPrimary: true, clientX: 110 });
+    fireEvent.pointerUp(node, { pointerId: 11, isPrimary: true, clientX: 110 });
+    fireEvent.click(node);
+    await act(async () => undefined);
+    expect(screen.queryByTestId('pm-drawer')).not.toBeInTheDocument();
+  });
+
   it('temporarily removes the dragged member from its cluster without duplicating it', () => {
     render(<TimelineRenderer graph={graphFixture(true)} today="2026-08-14" onMoveMilestone={vi.fn(async () => undefined)} />);
     const node = marker();

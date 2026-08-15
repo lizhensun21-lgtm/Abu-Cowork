@@ -23,6 +23,7 @@ export interface MilestoneQuickCardLabels {
   readonly plannedDate: string;
   readonly deliverableCompletion: string;
   readonly openIssues: string;
+  readonly openDetails: string;
 }
 
 function statusVariables(status: Parameters<typeof getMilestoneVisualStatus>[0]) {
@@ -183,6 +184,15 @@ export function MilestoneQuickCard({
             <span title={labels.deliverableCompletion}><Circle aria-hidden="true" />{presentation[0]?.completion}</span>
             <span title={labels.openIssues}><Triangle aria-hidden="true" />{presentation[0]?.issues}</span>
           </div>
+          {data[0] ? (
+            <button
+              type="button"
+              className="milestone-hover-preview__details"
+              onClick={() => onSelectMilestone(data[0].id)}
+            >
+              {labels.openDetails}
+            </button>
+          ) : null}
         </>
       )}
     </div>,

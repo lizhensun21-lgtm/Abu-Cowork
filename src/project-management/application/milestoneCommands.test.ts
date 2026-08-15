@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createProjectManagementStore } from '../state/projectManagementStore';
 import type { ProjectGraph } from '../domain/types';
 import type { ProjectManagementRepository } from '../repository/ProjectManagementRepository';
-import { MilestoneMutationConflictError, moveMilestone } from './milestoneCommands';
+import { MilestoneMutationConflictError, moveMilestone, updateMilestone } from './milestoneCommands';
 
 function graphFixture(): ProjectGraph {
   return {
@@ -51,6 +51,19 @@ describe('moveMilestone application command', () => {
       .toThrow(MilestoneMutationConflictError);
     expect(() => moveMilestone({ ...command, expectedDate: '2026-03-07' })(graphFixture()))
       .toThrow(MilestoneMutationConflictError);
+  });
+
+  it('updates Drawer fields while retaining I5 date and readonly relationship semantics', () => {
+    const graph = graphFixture();
+    updateMilestone({
+      milestoneId: 'm1', projectId: 'p1', timelineId: 't1', expected: graph.milestones[0],
+      values: { title: 'Updated', date: '2026-03-10', code: 'G2', status: 'blocked', note: 'After' },
+    })(graph);
+    expect(graph.milestones[0]).toMatchObject({
+      projectId: 'p1', timelineId: 't1', lane: 'YD', title: 'Updated', date: '2026-03-10',
+      code: 'G2', status: 'blocked', note: 'After',
+    });
+    expect(graph.milestones[0].status).not.toBe('current_focus');
   });
 
   it('commits only after save and rolls back on validation or repository failure', async () => {

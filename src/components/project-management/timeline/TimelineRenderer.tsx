@@ -22,6 +22,9 @@ import type {
   MoveMilestoneCommand,
   MoveProjectTimelineCommand,
   ResizeProjectTimelineCommand,
+  UpdateMilestoneCommand,
+  UpdateProjectCommand,
+  UpdateProjectTimelineCommand,
 } from '@/project-management/application';
 import type { ProjectGraph } from '@/project-management/domain';
 import {
@@ -70,6 +73,8 @@ import {
   type TimelineScrollbarGeometry,
 } from './timelineScrollbar';
 import { ProjectListRow } from '../ProjectList';
+import { ProjectManagementDrawer } from '../drawer/ProjectManagementDrawer';
+import type { ProjectManagementDrawerTarget } from '../drawer/projectManagementDrawerData';
 import {
   createProjectOverviewDisplayRows,
   createProjectOverviewViewModel,
@@ -177,6 +182,9 @@ export function TimelineRenderer({
   onMoveMilestone,
   onMoveProjectTimeline,
   onResizeProjectTimeline,
+  onUpdateProject,
+  onUpdateProjectTimeline,
+  onUpdateMilestone,
 }: {
   graph: Readonly<ProjectGraph>;
   today?: string;
@@ -185,6 +193,9 @@ export function TimelineRenderer({
   onMoveMilestone?: (command: MoveMilestoneCommand) => Promise<void>;
   onMoveProjectTimeline?: (command: MoveProjectTimelineCommand) => Promise<void>;
   onResizeProjectTimeline?: (command: ResizeProjectTimelineCommand) => Promise<void>;
+  onUpdateProject?: (command: UpdateProjectCommand) => Promise<void>;
+  onUpdateProjectTimeline?: (command: UpdateProjectTimelineCommand) => Promise<void>;
+  onUpdateMilestone?: (command: UpdateMilestoneCommand) => Promise<void>;
 }) {
   const { t, locale } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -236,12 +247,14 @@ export function TimelineRenderer({
   const projectBarDragRef = useRef<ProjectBarMoveSession | ProjectBarResizeSession | null>(null);
   const projectBarDragElementRef = useRef<HTMLSpanElement | null>(null);
   const savingTimelineIdsRef = useRef(new Set<string>());
+  const suppressedClickRef = useRef<{ kind: 'timeline' | 'milestone'; id: string; until: number } | null>(null);
   const [zoomLevelIndex, setZoomLevelIndex] = useState(DEFAULT_TIMELINE_ZOOM_LEVEL_INDEX);
   const [timeScale, setTimeScale] = useState<TimelineTimeScale>(DEFAULT_TIMELINE_TIME_SCALE);
   const [scaleMenuOpen, setScaleMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
   const [quickCardTarget, setQuickCardTarget] = useState<MilestoneQuickCardTarget | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<ProjectManagementDrawerTarget | null>(null);
   const [milestoneDragSession, setMilestoneDragSession] = useState<MilestoneDragSession | null>(null);
   const [savingMilestoneIds, setSavingMilestoneIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -898,12 +911,29 @@ export function TimelineRenderer({
     if (!quickCardTarget) return;
     const milestone = quickCardTarget.milestones.find((item) => item.id === milestoneId);
     if (!milestone) return;
-    quickCardController.open({
-      anchorElement: quickCardTarget.anchorElement,
-      milestoneId,
-      milestones: [milestone],
-    });
+    quickCardController.dismiss('outside-click');
+    setDrawerTarget({ kind: 'milestone', milestoneId });
   }, [quickCardController, quickCardTarget]);
+
+  const openMilestoneDrawer = useCallback((milestoneId: string) => {
+    const suppression = suppressedClickRef.current;
+    if (suppression?.kind === 'milestone' && suppression.id === milestoneId) {
+      suppressedClickRef.current = null;
+      if (Date.now() <= suppression.until) return;
+    }
+    quickCardController.dismiss('outside-click');
+    setDrawerTarget({ kind: 'milestone', milestoneId });
+  }, [quickCardController]);
+
+  const openTimelineDrawer = useCallback((timelineId: string) => {
+    const suppression = suppressedClickRef.current;
+    if (suppression?.kind === 'timeline' && suppression.id === timelineId) {
+      suppressedClickRef.current = null;
+      if (Date.now() <= suppression.until) return;
+    }
+    quickCardController.dismiss('outside-click');
+    setDrawerTarget({ kind: 'timeline', timelineId });
+  }, [quickCardController]);
 
   const extendTimelineForDragPointer = useCallback((clientX: number) => {
     const container = scrollRef.current;
@@ -1052,7 +1082,12 @@ export function TimelineRenderer({
   ) => {
     if (milestoneDragRef.current?.pointerId !== event.pointerId) return;
     event.stopPropagation();
-    if (milestoneDragRef.current.hasExceededDragThreshold) event.preventDefault();
+    if (milestoneDragRef.current.hasExceededDragThreshold) {
+      suppressedClickRef.current = {
+        kind: 'milestone', id: milestoneDragRef.current.sourceEntityId, until: Date.now() + 500,
+      };
+      event.preventDefault();
+    }
     void completeMilestoneDrag(event.pointerId);
   }, [completeMilestoneDrag]);
 
@@ -1262,7 +1297,12 @@ export function TimelineRenderer({
   const handleProjectBarPointerUp = useCallback((event: ReactPointerEvent<HTMLSpanElement>) => {
     if (projectBarDragRef.current?.pointerId !== event.pointerId) return;
     event.stopPropagation();
-    if (projectBarDragRef.current.hasExceededDragThreshold) event.preventDefault();
+    if (projectBarDragRef.current.hasExceededDragThreshold) {
+      suppressedClickRef.current = {
+        kind: 'timeline', id: projectBarDragRef.current.sourceEntityId, until: Date.now() + 500,
+      };
+      event.preventDefault();
+    }
     void completeProjectBarDrag(event.pointerId);
   }, [completeProjectBarDrag]);
 
@@ -1316,6 +1356,10 @@ export function TimelineRenderer({
       data-timeline-px-per-day={pxPerDay}
       data-timeline-start-date={timelineRange.startDate}
       data-timeline-end-date={timelineRange.endDate}
+      style={{
+        '--project-label-width': `${PROJECT_OVERVIEW_PROJECT_COLUMN_WIDTH}px`,
+        '--workspace-bottom-bar-height': `${PROJECT_OVERVIEW_BOTTOM_BAR_HEIGHT}px`,
+      } as CSSProperties}
       className="timeline-card main-workspace is-read-only"
       aria-label={t.sidebar.projectManagement}
     >
@@ -1451,13 +1495,7 @@ export function TimelineRenderer({
           </div>
         </div>
       </div>
-      <div
-        className="continuous-time-canvas"
-        style={{
-          '--project-label-width': `${PROJECT_OVERVIEW_PROJECT_COLUMN_WIDTH}px`,
-          '--workspace-bottom-bar-height': `${PROJECT_OVERVIEW_BOTTOM_BAR_HEIGHT}px`,
-        } as CSSProperties}
-      >
+      <div className="continuous-time-canvas">
         <div className="project-panel">
           <div className="project-panel__ruler-spacer" />
           <div ref={projectRowsRef} className="project-panel__rows" style={{ minHeight: rowsHeight }}>
@@ -1469,6 +1507,11 @@ export function TimelineRenderer({
                 onToggleExpanded={toggleProject}
                 hovered={hoveredTimelineId === row.timeline.timelineId}
                 onHoverTimeline={setHoveredTimelineId}
+                onOpenProject={(projectId) => {
+                  quickCardController.dismiss('outside-click');
+                  setDrawerTarget({ kind: 'project', projectId });
+                }}
+                onOpenTimeline={openTimelineDrawer}
               />
             ))}
           </div>
@@ -1596,6 +1639,7 @@ export function TimelineRenderer({
                           onPointerUp={handleProjectBarPointerUp}
                           onPointerCancel={handleProjectBarPointerCancel}
                           onLostPointerCapture={handleProjectBarPointerCancel}
+                          onClick={() => openTimelineDrawer(row.timeline.timelineId)}
                         >
                           {(['start', 'end'] as const).map((side) => (
                             <span
@@ -1632,6 +1676,7 @@ export function TimelineRenderer({
                         onDragPointerMove={handleMilestoneDragPointerMove}
                         onDragPointerUp={handleMilestoneDragPointerUp}
                         onDragPointerCancel={handleMilestoneDragPointerCancel}
+                        onMilestoneClick={openMilestoneDrawer}
                         previewDatesByMilestoneId={projectMoveMilestonePreviewDates}
                       />
                     </div>
@@ -1725,7 +1770,18 @@ export function TimelineRenderer({
         </div>
         <div className="project-overview-drawer-slot" aria-hidden="true" />
       </div>
-      <div data-project-overview-overlay-root />
+      <div data-project-overview-overlay-root>
+        {drawerTarget ? (
+          <ProjectManagementDrawer
+            graph={graph}
+            target={drawerTarget}
+            onClose={() => setDrawerTarget(null)}
+            onUpdateProject={onUpdateProject}
+            onUpdateTimeline={onUpdateProjectTimeline}
+            onUpdateMilestone={onUpdateMilestone}
+          />
+        ) : null}
+      </div>
       {quickCardTarget ? (
         <MilestoneQuickCard
           key={`${quickCardTarget.milestoneId}:${quickCardTarget.milestones.length}`}
@@ -1739,6 +1795,7 @@ export function TimelineRenderer({
             plannedDate: t.projectManagement.plannedDate,
             deliverableCompletion: t.projectManagement.deliverableCompletion,
             openIssues: t.projectManagement.openIssues,
+            openDetails: t.projectManagement.drawerOpenDetails,
           }}
           onSelectMilestone={handleQuickCardMilestoneSelect}
         />

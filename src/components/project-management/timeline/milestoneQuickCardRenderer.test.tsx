@@ -34,6 +34,14 @@ describe('Timeline Milestone Quick Card integration', () => {
     expect(document.querySelector('.milestone-node__marker-hit')).toHaveClass('milestone-node__marker-hit');
   });
 
+  it('opens Milestone Drawer from single Quick Card details and closes the card', () => {
+    render(<TimelineRenderer graph={graphFixture()} today="2026-08-14" />);
+    hoverMarker();
+    fireEvent.click(screen.getByRole('button', { name: 'Open details' }));
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-drawer')).toHaveAccessibleName('Milestone details: G1 Gate');
+  });
+
   it('opens one aggregate card with all cluster members in original order', () => {
     render(<TimelineRenderer graph={graphFixture(true)} today="2026-08-14" />);
     hoverMarker();
@@ -52,13 +60,13 @@ describe('Timeline Milestone Quick Card integration', () => {
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
   });
 
-  it('switches an aggregate member directly to a single card without a drawer', () => {
+  it('opens the selected aggregate member in the single PM Drawer and closes Quick Card', () => {
     render(<TimelineRenderer graph={graphFixture(true)} today="2026-08-14" />);
     hoverMarker();
     fireEvent.click(screen.getByRole('button', { name: /G2 Release/u }));
-    expect(screen.getByRole('tooltip')).toHaveTextContent('G2 Release');
-    expect(document.querySelectorAll('[data-milestone-popover-root]')).toHaveLength(1);
-    expect(document.querySelector('.project-overview-drawer')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-milestone-popover-root]')).toHaveLength(0);
+    expect(screen.getByTestId('pm-drawer')).toHaveAccessibleName('Milestone details: G2 Release');
   });
 
   it('does not treat an internal card click as an outside click', () => {

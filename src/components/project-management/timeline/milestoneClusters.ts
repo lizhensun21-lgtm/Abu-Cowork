@@ -13,11 +13,14 @@ export interface MilestoneClusterLayout {
   readonly clusterIndex: number;
   readonly clusterSize: number;
   readonly visualOrder: number;
+  readonly labelStackOrder: number;
   readonly isPrimary: boolean;
   readonly markerVisualOffset: number;
   readonly labelLeft: number;
   readonly labelWidth: number;
   readonly textWidth: number;
+  readonly isCoveredByNextLabel: boolean;
+  readonly coveredWidth: number;
 }
 
 export interface MilestoneClusterResult {
@@ -31,7 +34,6 @@ export interface MilestoneLabelBounds {
 }
 
 export const MILESTONE_CLUSTER_DISTANCE_PX = 22;
-export const MILESTONE_LABEL_COLLISION_GAP_PX = 4;
 
 type PositionedMilestone = MilestoneClusterInput & { readonly sourceOrder: number };
 
@@ -42,53 +44,6 @@ export function milestoneClusterAdditionalCount(clusterSize: number) {
 function clusterCountWidth(clusterSize: number) {
   const additionalCount = milestoneClusterAdditionalCount(clusterSize);
   return additionalCount > 0 ? 12 + String(additionalCount).length * 5 : 0;
-}
-
-function shrinkPairWidths(
-  widths: number[],
-  minimumWidths: readonly number[],
-  leftIndex: number,
-  rightIndex: number,
-  requestedReduction: number,
-) {
-  let remainingReduction = Math.max(requestedReduction, 0);
-  const widerIndex = widths[leftIndex] >= widths[rightIndex] ? leftIndex : rightIndex;
-  const narrowerIndex = widerIndex === leftIndex ? rightIndex : leftIndex;
-  const equalizingReduction = Math.min(
-    remainingReduction,
-    Math.max(
-      widths[widerIndex] - Math.max(widths[narrowerIndex], minimumWidths[widerIndex]),
-      0,
-    ),
-  );
-  widths[widerIndex] -= equalizingReduction;
-  remainingReduction -= equalizingReduction;
-
-  if (remainingReduction <= 0) return 0;
-  const leftCapacity = Math.max(widths[leftIndex] - minimumWidths[leftIndex], 0);
-  const rightCapacity = Math.max(widths[rightIndex] - minimumWidths[rightIndex], 0);
-  const totalCapacity = leftCapacity + rightCapacity;
-  if (totalCapacity <= 0) return remainingReduction;
-
-  const leftReduction = Math.min(
-    leftCapacity,
-    remainingReduction * (leftCapacity / totalCapacity),
-  );
-  widths[leftIndex] -= leftReduction;
-  remainingReduction -= leftReduction;
-  const rightReduction = Math.min(rightCapacity, remainingReduction);
-  widths[rightIndex] -= rightReduction;
-  remainingReduction -= rightReduction;
-
-  if (remainingReduction > 0) {
-    const finalLeftReduction = Math.min(
-      Math.max(widths[leftIndex] - minimumWidths[leftIndex], 0),
-      remainingReduction,
-    );
-    widths[leftIndex] -= finalLeftReduction;
-    remainingReduction -= finalLeftReduction;
-  }
-  return remainingReduction;
 }
 
 /** Builds transient visual clusters from current marker screen coordinates. */
@@ -102,6 +57,7 @@ export function buildMilestoneClusterLayout(
     .sort((left, right) => (
       left.markerX - right.markerX
       || (left.stableOrder ?? left.sourceOrder) - (right.stableOrder ?? right.sourceOrder)
+      || left.id.localeCompare(right.id)
       || left.sourceOrder - right.sourceOrder
     ));
   const clusters: PositionedMilestone[][] = [];
@@ -144,6 +100,7 @@ export function buildMilestoneClusterLayout(
         clusterIndex,
         clusterSize: cluster.length,
         visualOrder: visualOrderById.get(milestone.id) ?? 0,
+        labelStackOrder: visualOrderById.get(milestone.id) ?? 0,
         isPrimary,
         markerVisualOffset: cluster.length > 1 && isPrimary
           ? clusterCenterX - milestone.markerX
@@ -151,6 +108,8 @@ export function buildMilestoneClusterLayout(
         labelLeft: markerNodeWidth / 2 - labelWidth / 2,
         labelWidth,
         textWidth,
+        isCoveredByNextLabel: false,
+        coveredWidth: 0,
       }));
       if (isPrimary) {
         visibleLabels.push({
@@ -161,8 +120,6 @@ export function buildMilestoneClusterLayout(
   }
 
   const resolvedWidths = visibleLabels.map((label) => label.desiredLabelWidth);
-  const preferredMinimumWidths = visibleLabels.map((label) => label.countWidth + 12);
-  const hardMinimumWidths = visibleLabels.map((label) => label.countWidth);
   if (labelBounds) {
     visibleLabels.forEach((label, index) => {
       const boundaryWidth = Math.max(Math.min(
@@ -172,25 +129,6 @@ export function buildMilestoneClusterLayout(
       resolvedWidths[index] = Math.min(resolvedWidths[index], boundaryWidth);
     });
   }
-  visibleLabels.forEach((current, index) => {
-    if (index === 0) return;
-    const previous = visibleLabels[index - 1];
-    const maximumCombinedWidth = Math.max(
-      (current.centerX - previous.centerX - MILESTONE_LABEL_COLLISION_GAP_PX) * 2,
-      0,
-    );
-    const requiredReduction = resolvedWidths[index - 1] + resolvedWidths[index]
-      - maximumCombinedWidth;
-    if (requiredReduction <= 0) return;
-    const remainingReduction = shrinkPairWidths(
-      resolvedWidths, preferredMinimumWidths, index - 1, index, requiredReduction,
-    );
-    if (remainingReduction > 0) {
-      shrinkPairWidths(
-        resolvedWidths, hardMinimumWidths, index - 1, index, remainingReduction,
-      );
-    }
-  });
   visibleLabels.forEach((label, index) => {
     const layout = layouts.get(label.milestone.id);
     if (!layout) return;
@@ -200,6 +138,25 @@ export function buildMilestoneClusterLayout(
       labelLeft: markerNodeWidth / 2 - labelWidth / 2,
       labelWidth,
       textWidth: Math.max(labelWidth - label.countWidth, 0),
+    }));
+  });
+  visibleLabels.forEach((label, index) => {
+    const nextLabel = visibleLabels[index + 1];
+    if (!nextLabel) return;
+    const currentLayout = layouts.get(label.milestone.id);
+    const nextLayout = layouts.get(nextLabel.milestone.id);
+    if (!currentLayout || !nextLayout) return;
+    const currentRight = label.centerX + currentLayout.labelWidth / 2;
+    const nextLeft = nextLabel.centerX - nextLayout.labelWidth / 2;
+    const coveredWidth = Math.min(
+      Math.max(currentRight - nextLeft, 0),
+      currentLayout.labelWidth,
+    );
+    if (coveredWidth <= 0) return;
+    layouts.set(label.milestone.id, Object.freeze({
+      ...currentLayout,
+      isCoveredByNextLabel: true,
+      coveredWidth,
     }));
   });
   return Object.freeze({ groups, layouts });

@@ -56,6 +56,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
   onDragPointerMove,
   onDragPointerUp,
   onDragPointerCancel,
+  onMilestoneClick,
   previewDatesByMilestoneId,
 }: {
   readonly milestones: ReadonlyArray<Readonly<TimelineMilestone>>;
@@ -74,6 +75,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
   readonly onDragPointerMove?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
   readonly onDragPointerUp?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
   readonly onDragPointerCancel?: (event: ReactPointerEvent<HTMLSpanElement>) => void;
+  readonly onMilestoneClick?: (milestoneId: string) => void;
   readonly previewDatesByMilestoneId?: ReadonlyMap<string, string>;
 }) {
   const presentedMilestones = useMemo(() => milestones.map((milestone) => (
@@ -125,6 +127,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         data-milestone-cluster-id={milestoneLayout.clusterId}
         data-milestone-cluster-size={milestoneLayout.clusterSize}
         data-cluster-primary={String(milestoneLayout.isPrimary)}
+        data-milestone-label-stack-order={milestoneLayout.labelStackOrder}
         data-milestone-visual-status={visualStatus}
         data-milestone-preview-date={isDragging ? milestone.date : undefined}
         data-milestone-dragging={isDragging || undefined}
@@ -133,7 +136,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         className={`milestone-node${milestoneLayout.clusterSize > 1 ? ' is-clustered' : ''}${isDragging ? ' is-dragging' : ''}${isSaving ? ' is-saving' : ''}`}
         style={{
           left: coordinates.dateToX(milestone.date),
-          '--milestone-cluster-z': 4 + Math.min(milestoneLayout.visualOrder, 20),
+          '--milestone-label-stack-z': 4 + Math.min(milestoneLayout.labelStackOrder, 20),
           '--milestone-cluster-marker-offset': `${milestoneLayout.markerVisualOffset}px`,
           ...statusVariables,
         } as CSSProperties}
@@ -156,6 +159,7 @@ export const TimelineMilestones = memo(function TimelineMilestones({
         onPointerUp={milestoneLayout.isPrimary ? onDragPointerUp : undefined}
         onPointerCancel={milestoneLayout.isPrimary ? onDragPointerCancel : undefined}
         onLostPointerCapture={milestoneLayout.isPrimary ? onDragPointerCancel : undefined}
+        onClick={milestoneLayout.isPrimary ? () => onMilestoneClick?.(milestone.id) : undefined}
         title={isHiddenClusterMember ? undefined : `${accessibleLabel} · ${milestone.date}`}
       >
         {milestoneLayout.isPrimary ? (
@@ -176,8 +180,12 @@ export const TimelineMilestones = memo(function TimelineMilestones({
           </span>
         ) : null}
         <span
-          className={`milestone-node__label${isHiddenClusterMember ? ' is-cluster-hidden' : ''}`}
-          style={{ left: milestoneLayout.labelLeft, width: milestoneLayout.labelWidth }}
+          className={`milestone-node__label${isHiddenClusterMember ? ' is-cluster-hidden' : ''}${milestoneLayout.isCoveredByNextLabel ? ' is-covered-by-next' : ''}`}
+          style={{
+            left: milestoneLayout.labelLeft,
+            width: milestoneLayout.labelWidth,
+            '--milestone-label-covered-width': `${milestoneLayout.coveredWidth}px`,
+          } as CSSProperties}
           aria-hidden={isHiddenClusterMember || undefined}
         >
           <span className="milestone-node__label-text" style={{ width: milestoneLayout.textWidth }}>

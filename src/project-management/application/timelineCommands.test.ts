@@ -7,6 +7,7 @@ import {
   moveProjectTimeline,
   ProjectTimelineMutationConflictError,
   resizeProjectTimeline,
+  updateProjectTimeline,
 } from './timelineCommands';
 
 function graphFixture(): ProjectGraph {
@@ -80,6 +81,19 @@ describe('ProjectTimeline application commands', () => {
     })(graph);
     expect(graph.projectTimelines[1].endDate).toBe('2026-11-30');
     expect(graph.projects[0]).toMatchObject({ startDate: '2026-01-01', endDate: '2026-12-31' });
+  });
+
+  it('uses the resize range invariant for Drawer metadata edits, including same-day ranges', () => {
+    const graph = graphFixture();
+    const milestoneDates = graph.milestones.map((item) => item.date);
+    updateProjectTimeline({
+      timelineId: 'yd', projectId: 'p1', expectedStartDate: '2026-01-01', expectedEndDate: '2026-12-31',
+      expectedName: 'YD', expectedKeyResources: [], name: 'Delivery', keyResources: ['Owner'],
+      startDate: '2026-06-01', endDate: '2026-06-01',
+    })(graph);
+    expect(graph.projectTimelines[0]).toMatchObject({ name: 'Delivery', startDate: '2026-06-01', endDate: '2026-06-01', keyResources: ['Owner'] });
+    expect(graph.projects[0]).toMatchObject({ startDate: '2026-06-01', endDate: '2026-06-01' });
+    expect(graph.milestones.map((item) => item.date)).toEqual(milestoneDates);
   });
 
   it('saves one atomic candidate and rolls every entity back on repository failure', async () => {

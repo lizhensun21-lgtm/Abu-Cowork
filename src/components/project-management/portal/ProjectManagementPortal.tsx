@@ -5,6 +5,7 @@ import {
   CalendarDays,
   FolderKanban,
   LayoutDashboard,
+  PanelLeft,
   Settings,
   Users,
   Video,
@@ -50,6 +51,7 @@ export default function ProjectManagementPortal() {
   const [activeView, setActiveView] = useState<ProjectManagementPortalView>(
     DEFAULT_PROJECT_MANAGEMENT_PORTAL_VIEW,
   );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const setViewMode = useSettingsStore((state) => state.setViewMode);
   const { user, openAccountSettings } = usePortalUserAdapter();
 
@@ -71,43 +73,73 @@ export default function ProjectManagementPortal() {
     >
       <aside
         data-project-management-portal-sidebar
-        className="flex w-[232px] shrink-0 flex-col border-r border-[var(--abu-border)] bg-[var(--abu-bg-canvas)] px-3 py-3"
+        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+        className={cn(
+          'flex shrink-0 flex-col border-r border-[color:rgb(17_24_39_/_0.06)] bg-[var(--abu-bg-canvas)] py-3',
+          sidebarCollapsed ? 'w-[56px] px-2' : 'w-[232px] px-3',
+        )}
         aria-label={t.projectManagementPortal.navigationLabel}
       >
-        <button
-          type="button"
-          onClick={() => openAccountSettings()}
-          className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--abu-bg-hover)] active:bg-[var(--abu-bg-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]"
-          title={t.projectManagementPortal.openAccountSettings}
-        >
-          <span className="h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[var(--abu-border)]">
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <DefaultUserAvatar />
-            )}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-body font-medium text-[var(--abu-text-primary)]">
-            {user.displayName}
-          </span>
-          <Settings className="h-4 w-4 text-[var(--abu-text-tertiary)] group-hover:text-[var(--abu-text-secondary)]" aria-hidden="true" />
-        </button>
+        <div className={cn('flex items-center', sidebarCollapsed ? 'flex-col gap-2' : 'gap-1')}>
+          <button
+            type="button"
+            aria-label={sidebarCollapsed ? t.sidebar.showSidebar : t.sidebar.hideSidebar}
+            aria-expanded={!sidebarCollapsed}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--abu-text-tertiary)] transition-colors hover:bg-[var(--abu-bg-hover)] hover:text-[var(--abu-text-primary)] active:bg-[var(--abu-bg-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]"
+            title={sidebarCollapsed ? t.sidebar.showSidebar : t.sidebar.hideSidebar}
+          >
+            <PanelLeft className="h-4 w-4" strokeWidth={1.6} aria-hidden="true" />
+          </button>
 
-        <div className="mt-4 px-2">
-          <p className="text-caption font-medium uppercase tracking-[0.08em] text-[var(--abu-text-muted)]">
-            {t.projectManagementPortal.moduleName}
-          </p>
+          <button
+            type="button"
+            aria-label={user.displayName}
+            onClick={() => openAccountSettings()}
+            className={cn(
+              'group flex min-w-0 items-center rounded-lg text-left transition-colors hover:bg-[var(--abu-bg-hover)] active:bg-[var(--abu-bg-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]',
+              sidebarCollapsed ? 'h-9 w-9 justify-center p-0' : 'flex-1 gap-2.5 px-2 py-2',
+            )}
+            title={sidebarCollapsed ? user.displayName : t.projectManagementPortal.openAccountSettings}
+          >
+            <span className="h-8 w-8 shrink-0 overflow-hidden rounded-full border border-[var(--abu-border)]">
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <DefaultUserAvatar />
+              )}
+            </span>
+            {!sidebarCollapsed ? (
+              <>
+                <span className="min-w-0 flex-1 truncate text-body font-medium text-[var(--abu-text-primary)]">
+                  {user.displayName}
+                </span>
+                <Settings className="h-4 w-4 text-[var(--abu-text-tertiary)] group-hover:text-[var(--abu-text-secondary)]" aria-hidden="true" />
+              </>
+            ) : null}
+          </button>
         </div>
 
-        <nav className="mt-2 space-y-1" aria-label={t.projectManagementPortal.navigationLabel}>
+        {!sidebarCollapsed ? (
+          <div className="mt-4 px-2">
+            <p className="text-caption font-medium uppercase tracking-[0.08em] text-[var(--abu-text-muted)]">
+              {t.projectManagementPortal.moduleName}
+            </p>
+          </div>
+        ) : null}
+
+        <nav className={cn('space-y-1', sidebarCollapsed ? 'mt-4' : 'mt-2')} aria-label={t.projectManagementPortal.navigationLabel}>
           {navigation.map(({ view, icon: Icon, label }) => (
             <button
               key={view}
               type="button"
+              aria-label={label}
               aria-current={activeView === view ? 'page' : undefined}
               onClick={() => setActiveView(view)}
+              title={sidebarCollapsed ? label : undefined}
               className={cn(
-                'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]',
+                'flex w-full items-center rounded-lg py-2 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]',
+                sidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3',
                 activeView === view
                   ? 'bg-[var(--abu-bg-hover)] font-medium text-[var(--abu-text-primary)]'
                   : 'text-[var(--abu-text-secondary)] hover:bg-[var(--abu-bg-hover)] hover:text-[var(--abu-text-primary)] active:bg-[var(--abu-bg-active)]',
@@ -121,24 +153,29 @@ export default function ProjectManagementPortal() {
                 strokeWidth={1.75}
                 aria-hidden="true"
               />
-              <span>{label}</span>
+              {!sidebarCollapsed ? <span>{label}</span> : null}
             </button>
           ))}
         </nav>
 
         <button
           type="button"
+          aria-label={t.projectManagementPortal.backToAbu}
           onClick={() => setViewMode('chat')}
-          className="mt-auto flex w-full items-center gap-3 rounded-lg px-3 py-2 text-body text-[var(--abu-text-secondary)] transition-colors hover:bg-[var(--abu-bg-hover)] hover:text-[var(--abu-text-primary)] active:bg-[var(--abu-bg-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]"
+          title={sidebarCollapsed ? t.projectManagementPortal.backToAbu : undefined}
+          className={cn(
+            'mt-auto flex w-full items-center rounded-lg py-2 text-body text-[var(--abu-text-secondary)] transition-colors hover:bg-[var(--abu-bg-hover)] hover:text-[var(--abu-text-primary)] active:bg-[var(--abu-bg-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--abu-clay)]',
+            sidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3',
+          )}
         >
           <ArrowLeft className="h-[18px] w-[18px] text-[var(--abu-text-tertiary)]" strokeWidth={1.75} aria-hidden="true" />
-          <span>{t.projectManagementPortal.backToAbu}</span>
+          {!sidebarCollapsed ? <span>{t.projectManagementPortal.backToAbu}</span> : null}
         </button>
       </aside>
 
       <main
         data-project-management-portal-content
-        className="m-2 min-w-0 flex-1 overflow-hidden rounded-[var(--abu-radius-panel)] border border-[var(--abu-border)] bg-[var(--abu-bg-base)] shadow-[var(--abu-shadow-card)]"
+        className="m-2 min-w-0 flex-1 overflow-hidden rounded-[var(--abu-radius-panel)] border border-[var(--abu-border)] bg-[var(--abu-bg-base)]"
       >
         {activeView === 'overview' ? (
           <ProjectManagementWorkspace />

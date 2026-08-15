@@ -7,6 +7,9 @@ import {
   moveProjectManagementMilestone,
   moveProjectManagementTimeline,
   resizeProjectManagementTimeline,
+  updateProjectManagementMilestone,
+  updateProjectManagementProject,
+  updateProjectManagementTimeline,
   useProjectManagementStore,
 } from '@/project-management/state';
 import { TimelineRenderer } from './timeline/TimelineRenderer';
@@ -75,6 +78,9 @@ export default function ProjectManagementWorkspace() {
             onMoveMilestone={moveProjectManagementMilestone}
             onMoveProjectTimeline={moveProjectManagementTimeline}
             onResizeProjectTimeline={resizeProjectManagementTimeline}
+            onUpdateProject={updateProjectManagementProject}
+            onUpdateProjectTimeline={updateProjectManagementTimeline}
+            onUpdateMilestone={updateProjectManagementMilestone}
           />
         </div>
       )}

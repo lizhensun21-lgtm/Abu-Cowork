@@ -22,6 +22,15 @@ export interface ResizeProjectTimelineCommand extends ExpectedTimelineRange {
   readonly date: string;
 }
 
+export interface UpdateProjectTimelineCommand extends ExpectedTimelineRange {
+  readonly expectedName: string;
+  readonly expectedKeyResources: readonly string[];
+  readonly name: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly keyResources: readonly string[];
+}
+
 export class ProjectTimelineMutationConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -67,6 +76,17 @@ function mirrorYdProjectDates(draft: ProjectGraph, timeline: ProjectTimeline) {
   project.endDate = timeline.endDate;
 }
 
+function applyTimelineRange(
+  draft: ProjectGraph,
+  timeline: ProjectTimeline,
+  startDate: string,
+  endDate: string,
+) {
+  timeline.startDate = startDate;
+  timeline.endDate = endDate;
+  mirrorYdProjectDates(draft, timeline);
+}
+
 /** Atomically shifts one ProjectTimeline and every Milestone that belongs to it. */
 export function moveProjectTimeline(
   command: MoveProjectTimelineCommand,
@@ -103,9 +123,32 @@ export function resizeProjectTimeline(
 ): ProjectGraphMutation {
   return (draft) => {
     const timeline = resolveTimeline(draft, command);
-    if (command.side === 'start') timeline.startDate = command.date;
-    else timeline.endDate = command.date;
-    mirrorYdProjectDates(draft, timeline);
+    applyTimelineRange(
+      draft,
+      timeline,
+      command.side === 'start' ? command.date : timeline.startDate,
+      command.side === 'end' ? command.date : timeline.endDate,
+    );
+    return draft;
+  };
+}
+
+/** Drawer edit reuses the same range application invariant as I5 resize. */
+export function updateProjectTimeline(command: UpdateProjectTimelineCommand): ProjectGraphMutation {
+  return (draft) => {
+    const timeline = resolveTimeline(draft, command);
+    if (
+      timeline.name !== command.expectedName
+      || timeline.keyResources.length !== command.expectedKeyResources.length
+      || timeline.keyResources.some((value, index) => value !== command.expectedKeyResources[index])
+    ) {
+      throw new ProjectTimelineMutationConflictError(
+        `ProjectTimeline metadata changed before commit: ${command.timelineId}`,
+      );
+    }
+    timeline.name = command.name;
+    timeline.keyResources = [...command.keyResources];
+    applyTimelineRange(draft, timeline, command.startDate, command.endDate);
     return draft;
   };
 }

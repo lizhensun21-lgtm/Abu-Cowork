@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -64,6 +64,36 @@ describe('ProjectManagementPortal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Taylor' }));
     expect(useSettingsStore.getState().systemSettingsOpen).toBe(true);
+  });
+
+  it('collapses to an icon rail, expands the workspace, and preserves the state across portal navigation', async () => {
+    const user = userEvent.setup();
+    render(<ProjectManagementPortal />);
+    const sidebar = screen.getByRole('complementary', { name: 'Project Management navigation' });
+    const content = document.querySelector<HTMLElement>('[data-project-management-portal-content]')!;
+
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(sidebar).toHaveClass('w-[232px]');
+    expect(content.className).not.toContain('shadow');
+
+    await user.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    expect(sidebar).toHaveClass('w-[56px]');
+    expect(sidebar).not.toHaveClass('w-[232px]');
+    expect(within(sidebar).queryByText('Project Management')).not.toBeInTheDocument();
+    expect(within(sidebar).queryByText('Project Overview')).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole('button', { name: 'Project Overview' }))
+      .toHaveAttribute('aria-current', 'page');
+    expect(within(sidebar).getByRole('button', { name: 'Back to Abu' })).toHaveAttribute('title', 'Back to Abu');
+
+    await user.click(within(sidebar).getByRole('button', { name: 'Meetings' }));
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    expect(within(sidebar).getByRole('button', { name: 'Meetings' }))
+      .toHaveAttribute('aria-current', 'page');
+
+    await user.click(within(sidebar).getByRole('button', { name: 'Show sidebar' }));
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(within(sidebar).getByText('Meetings')).toBeInTheDocument();
   });
 
   it('contains no repository, graph mutation, persistence, or mock-data path', () => {
