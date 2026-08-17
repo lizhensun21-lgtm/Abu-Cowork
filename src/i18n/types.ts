@@ -257,6 +257,23 @@ export interface TranslationDict {
     drawerSectionNotes: string;
     drawerMilestoneCount: string;
     drawerNoMembers: string;
+    addMember: string;
+    removeMember: string;
+    changeRole: string;
+    setAsProjectManager: string;
+    availablePersons: string;
+    selectPerson: string;
+    noAvailablePersons: string;
+    unassigned: string;
+    teamMutationFailed: string;
+    roleProjectManager: string;
+    roleSystemOwner: string;
+    roleSoftwareOwner: string;
+    roleHardwareOwner: string;
+    roleTestOwner: string;
+    roleOemContact: string;
+    roleTier1Contact: string;
+    roleMember: string;
     drawerNoMilestones: string;
     drawerStatusUnknown: string;
     drawerStatusNotStarted: string;
@@ -270,6 +287,26 @@ export interface TranslationDict {
     drawerInvalidInput: string;
     drawerExternalChange: string;
     drawerSaveError: string;
+    createProject: string;
+    addTimeline: string;
+    addMilestone: string;
+    crudCreate: string;
+    crudCancel: string;
+    crudSaving: string;
+    crudInvalidInput: string;
+    crudSaveError: string;
+    createStepCore: string;
+    createStepPlan: string;
+    createPrevious: string;
+    ydAutoCreated: string;
+    initialMilestone: string;
+    deleteAction: string;
+    confirmDelete: string;
+    deleteProjectWarning: string;
+    deleteTimelineWarning: string;
+    deleteMilestoneWarning: string;
+    deleteFailed: string;
+    ydDeleteProhibited: string;
   };
 
   projectManagementPortal: {
@@ -284,6 +321,30 @@ export interface TranslationDict {
     notAvailable: string;
     openAccountSettings: string;
     navigationLabel: string;
+  };
+
+  meeting: {
+    title: string;
+    emptyDescription: string;
+    selectFile: string;
+    changeFile: string;
+    closeMeeting: string;
+    allProjects: string;
+    reportMonthMilestones: string;
+    readOnly: string;
+    maintenance: string;
+    enterMaintenance: string;
+    exitMaintenance: string;
+    exportDraft: string;
+    exportFinal: string;
+    discardChanges: string;
+    dirty: string;
+    invalidFile: string;
+    fileReadError: string;
+    unsupportedFile: string;
+    confirmDiscard: string;
+    reportMonth: string;
+    warnings: string;
   };
 
   // Todos

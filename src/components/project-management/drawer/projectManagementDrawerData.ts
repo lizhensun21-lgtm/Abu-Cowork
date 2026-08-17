@@ -3,8 +3,10 @@ import type {
   Person,
   Project,
   ProjectGraph,
+  ProjectMembership,
   ProjectTimeline,
 } from '@/project-management/domain';
+import { resolveProjectManager } from '@/project-management/application';
 
 export type ProjectManagementDrawerTarget =
   | { readonly kind: 'project'; readonly projectId: string }
@@ -15,7 +17,11 @@ export interface ProjectDrawerData {
   readonly kind: 'project';
   readonly project: Readonly<Project>;
   readonly projectManager?: Readonly<Person>;
-  readonly members: ReadonlyArray<Readonly<Person>>;
+  readonly members: ReadonlyArray<{
+    readonly person: Readonly<Person>;
+    readonly membership: Readonly<ProjectMembership>;
+  }>;
+  readonly availablePersons: ReadonlyArray<Readonly<Person>>;
   readonly milestones: ReadonlyArray<Readonly<Milestone>>;
 }
 
@@ -48,14 +54,7 @@ export function selectProjectManager(
   graph: Readonly<ProjectGraph>,
   projectId: string,
 ): Readonly<Person> | undefined {
-  const membership = graph.projectMemberships.find((item) => (
-    item.projectId === projectId
-    && item.status === 'active'
-    && item.roles.includes('project_manager')
-  ));
-  return membership
-    ? graph.persons.find((person) => person.id === membership.personId)
-    : undefined;
+  return resolveProjectManager(graph, projectId)?.person;
 }
 
 export function selectProjectManagementDrawerData(
@@ -71,8 +70,13 @@ export function selectProjectManagementDrawerData(
       members: graph.projectMemberships.flatMap((membership) => {
         if (membership.projectId !== project.id || membership.status !== 'active') return [];
         const person = graph.persons.find((item) => item.id === membership.personId);
-        return person ? [person] : [];
+        return person ? [{ person, membership }] : [];
       }),
+      availablePersons: graph.persons.filter((person) => !graph.projectMemberships.some((membership) => (
+        membership.projectId === project.id
+        && membership.personId === person.id
+        && membership.status === 'active'
+      ))),
       milestones: graph.milestones.filter((milestone) => milestone.projectId === project.id),
     } : null;
   }

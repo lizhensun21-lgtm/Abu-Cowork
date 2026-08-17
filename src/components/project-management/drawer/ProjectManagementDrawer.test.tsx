@@ -8,6 +8,7 @@ import type {
   UpdateProjectTimelineCommand,
 } from '@/project-management/application';
 import { TimelineRenderer } from '../timeline/TimelineRenderer';
+import { ProjectManagementDrawer } from './ProjectManagementDrawer';
 
 function graphFixture(): ProjectGraph {
   return {
@@ -17,13 +18,18 @@ function graphFixture(): ProjectGraph {
       { id: 'oem', projectId: 'p1', lane: 'OEM', name: 'OEM plan', startDate: '2026-03-01', endDate: '2026-10-01', keyResources: [] },
     ],
     milestones: [{ id: 'm1', projectId: 'p1', timelineId: 'yd', lane: 'YD', title: 'Gate', date: '2026-04-01', code: 'G1', status: 'at_risk', note: 'Watch' }],
-    persons: [{ id: 'person', name: 'Alex' }],
+    persons: [{ id: 'person', name: 'Alex' }, { id: 'available', name: 'Bo', title: 'Engineer' }],
     projectMemberships: [{ id: 'p1::person', projectId: 'p1', personId: 'person', roles: ['project_manager'], status: 'active' }],
     projectTeams: [{ projectId: 'p1' }],
   };
 }
 
 describe('Project Management Drawer shell', () => {
+  it('does not expose mutation actions when opened without write callbacks', () => {
+    render(<ProjectManagementDrawer graph={graphFixture()} target={{ kind: 'project', projectId: 'p1' }} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
   it('opens one Project Drawer, keeps internal clicks open, and closes on outside pointer or Escape', () => {
     render(<TimelineRenderer graph={graphFixture()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
@@ -133,7 +139,7 @@ describe('Project Management Drawer shell', () => {
   });
 
   it('opens Timeline and Milestone Drawers from explicit entries and exposes only domain statuses', () => {
-    render(<TimelineRenderer graph={graphFixture()} />);
+    render(<TimelineRenderer graph={graphFixture()} onUpdateMilestone={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'OEM plan' }));
     expect(screen.getByTestId('pm-drawer')).toHaveAccessibleName(/Timeline details/);
     expect(screen.getByText('OEM')).toBeInTheDocument();
@@ -174,6 +180,35 @@ describe('Project Management Drawer shell', () => {
     expect(within(milestoneDrawer).getByRole('button', { name: 'Notes' })).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('presents formal members and emits scoped Team commands without Account defaults', async () => {
+    const onAddMember = vi.fn(async () => undefined);
+    const onRemoveMember = vi.fn(async () => undefined);
+    const onChangeMemberRoles = vi.fn(async () => undefined);
+    const onSetProjectManager = vi.fn(async () => undefined);
+    const graph = graphFixture();
+    graph.projectMemberships.push({ id: 'p1::available', projectId: 'p1', personId: 'available', roles: ['member'], status: 'active' });
+    graph.persons.push({ id: 'candidate', name: 'Casey' });
+    render(<TimelineRenderer graph={graph} onAddMember={onAddMember} onRemoveMember={onRemoveMember} onChangeMemberRoles={onChangeMemberRoles} onSetProjectManager={onSetProjectManager} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+    const drawer = screen.getByTestId('pm-drawer');
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Team members' }));
+    expect(within(drawer).getAllByText('Alex').length).toBeGreaterThan(0);
+    expect(within(drawer).getAllByText('A').length).toBeGreaterThan(0);
+
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Add member' }));
+    fireEvent.change(within(drawer).getByLabelText('Available people'), { target: { value: 'candidate' } });
+    fireEvent.click(within(drawer).getAllByRole('button', { name: 'Add member' }).at(-1)!);
+    await waitFor(() => expect(onAddMember).toHaveBeenCalledWith({ projectId: 'p1', personId: 'candidate' }));
+
+    fireEvent.change(within(drawer).getByLabelText('Change role: Alex'), { target: { value: 'test_owner' } });
+    await waitFor(() => expect(onChangeMemberRoles).toHaveBeenCalledWith({ projectId: 'p1', personId: 'person', roles: ['project_manager', 'test_owner'] }));
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Set as Project Manager: Bo' }));
+    await waitFor(() => expect(onSetProjectManager).toHaveBeenCalledWith({ projectId: 'p1', personId: 'available' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Remove member: Alex' }));
+    await waitFor(() => expect(onRemoveMember).toHaveBeenCalledWith({ projectId: 'p1', personId: 'person' }));
+    expect(JSON.stringify(onAddMember.mock.calls)).not.toMatch(/account|currentUser|profile/i);
+  });
+
   it('does not change Timeline viewport geometry while opening and closing a Drawer', () => {
     render(<TimelineRenderer graph={graphFixture()} />);
     const workspace = screen.getByTestId('project-timeline-workspace');
@@ -188,5 +223,17 @@ describe('Project Management Drawer shell', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(container.scrollLeft).toBe(240);
     expect({ start: workspace.dataset.timelineStartDate, end: workspace.dataset.timelineEndDate, scale: workspace.dataset.timelineScale }).toEqual(before);
+  });
+
+  it('confirms aggregate Project deletion with affected counts and closes the Drawer on success', async () => {
+    const onDeleteProject = vi.fn(async () => undefined);
+    render(<TimelineRenderer graph={graphFixture()} onDeleteProject={onDeleteProject} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+    fireEvent.click(within(screen.getByTestId('pm-drawer')).getByRole('button', { name: 'Delete' }));
+    expect(screen.getByText(/2 timelines, 1 milestones, and 1 team memberships/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
+    await waitFor(() => expect(onDeleteProject).toHaveBeenCalledOnce());
+    expect(onDeleteProject).toHaveBeenCalledWith({ projectId: 'p1' });
+    expect(screen.queryByTestId('pm-drawer')).not.toBeInTheDocument();
   });
 });

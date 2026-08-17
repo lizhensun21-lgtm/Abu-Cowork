@@ -14,6 +14,7 @@ import {
 
 import DefaultUserAvatar from '@/components/common/DefaultUserAvatar';
 import ProjectManagementWorkspace from '@/components/project-management/ProjectManagementWorkspace';
+import MeetingWorkspace from '@/components/project-management/meeting/MeetingWorkspace';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -177,8 +178,8 @@ export default function ProjectManagementPortal() {
         data-project-management-portal-content
         className="m-2 min-w-0 flex-1 overflow-hidden rounded-[var(--abu-radius-panel)] border border-[var(--abu-border)] bg-[var(--abu-bg-base)]"
       >
-        {activeView === 'overview' ? (
-          <ProjectManagementWorkspace />
+        {activeView === 'overview' ? <ProjectManagementWorkspace /> : activeView === 'meetings' ? (
+          <MeetingWorkspace />
         ) : (
           <PortalPlaceholder title={activeItem.label} message={t.projectManagementPortal.notAvailable} />
         )}

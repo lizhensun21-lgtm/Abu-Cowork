@@ -7,21 +7,34 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import {
   ChevronDown,
   PanelRight,
+  Plus,
   SlidersHorizontal,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 
-import { useI18n } from '@/i18n';
+import { format, useI18n } from '@/i18n';
+import ConfirmDialog from '@/components/common/ConfirmDialog';
 import type {
+  AddProjectMemberCommand,
+  ChangeProjectMemberRolesCommand,
+  CreateMilestoneCommand,
+  CreateProjectCommand,
+  CreateProjectTimelineCommand,
+  DeleteMilestoneCommand,
+  DeleteProjectCommand,
+  DeleteProjectTimelineCommand,
   MoveMilestoneCommand,
   MoveProjectTimelineCommand,
   ResizeProjectTimelineCommand,
+  RemoveProjectMemberCommand,
+  SetProjectManagerCommand,
   UpdateMilestoneCommand,
   UpdateProjectCommand,
   UpdateProjectTimelineCommand,
@@ -73,6 +86,11 @@ import {
   type TimelineScrollbarGeometry,
 } from './timelineScrollbar';
 import { ProjectListRow } from '../ProjectList';
+import {
+  CreateMilestoneDialog,
+  CreateProjectDialog,
+  CreateTimelineDialog,
+} from '../ProjectManagementCrudDialogs';
 import { ProjectManagementDrawer } from '../drawer/ProjectManagementDrawer';
 import type { ProjectManagementDrawerTarget } from '../drawer/projectManagementDrawerData';
 import {
@@ -178,6 +196,9 @@ export function TimelineRenderer({
   graph,
   today = localTodayDateKey(),
   initialFocusDate,
+  workspaceTitle,
+  highlightedMonth: highlightedMonthKey,
+  toolbarLeading,
   quickCardMetricsByMilestoneId,
   onMoveMilestone,
   onMoveProjectTimeline,
@@ -185,10 +206,23 @@ export function TimelineRenderer({
   onUpdateProject,
   onUpdateProjectTimeline,
   onUpdateMilestone,
+  onCreateProject,
+  onCreateProjectTimeline,
+  onCreateMilestone,
+  onDeleteProject,
+  onDeleteProjectTimeline,
+  onDeleteMilestone,
+  onAddMember,
+  onRemoveMember,
+  onChangeMemberRoles,
+  onSetProjectManager,
 }: {
   graph: Readonly<ProjectGraph>;
   today?: string;
   initialFocusDate?: string;
+  workspaceTitle?: string;
+  highlightedMonth?: string;
+  toolbarLeading?: ReactNode;
   quickCardMetricsByMilestoneId?: ReadonlyMap<string, Readonly<MilestoneQuickCardMetrics>>;
   onMoveMilestone?: (command: MoveMilestoneCommand) => Promise<void>;
   onMoveProjectTimeline?: (command: MoveProjectTimelineCommand) => Promise<void>;
@@ -196,6 +230,16 @@ export function TimelineRenderer({
   onUpdateProject?: (command: UpdateProjectCommand) => Promise<void>;
   onUpdateProjectTimeline?: (command: UpdateProjectTimelineCommand) => Promise<void>;
   onUpdateMilestone?: (command: UpdateMilestoneCommand) => Promise<void>;
+  onCreateProject?: (command: CreateProjectCommand) => Promise<void>;
+  onCreateProjectTimeline?: (command: CreateProjectTimelineCommand) => Promise<void>;
+  onCreateMilestone?: (command: CreateMilestoneCommand) => Promise<void>;
+  onDeleteProject?: (command: DeleteProjectCommand) => Promise<void>;
+  onDeleteProjectTimeline?: (command: DeleteProjectTimelineCommand) => Promise<void>;
+  onDeleteMilestone?: (command: DeleteMilestoneCommand) => Promise<void>;
+  onAddMember?: (command: AddProjectMemberCommand) => Promise<void>;
+  onRemoveMember?: (command: RemoveProjectMemberCommand) => Promise<void>;
+  onChangeMemberRoles?: (command: ChangeProjectMemberRolesCommand) => Promise<void>;
+  onSetProjectManager?: (command: SetProjectManagerCommand) => Promise<void>;
 }) {
   const { t, locale } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -255,6 +299,15 @@ export function TimelineRenderer({
   const [hoveredTimelineId, setHoveredTimelineId] = useState<string | null>(null);
   const [quickCardTarget, setQuickCardTarget] = useState<MilestoneQuickCardTarget | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<ProjectManagementDrawerTarget | null>(null);
+  const [createTarget, setCreateTarget] = useState<
+    | { kind: 'project' }
+    | { kind: 'timeline'; projectId: string }
+    | { kind: 'milestone'; projectId: string; timelineId: string }
+    | null
+  >(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProjectManagementDrawerTarget | null>(null);
+  const [deleteError, setDeleteError] = useState('');
+  const deletingRef = useRef(false);
   const [milestoneDragSession, setMilestoneDragSession] = useState<MilestoneDragSession | null>(null);
   const [savingMilestoneIds, setSavingMilestoneIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -328,7 +381,9 @@ export function TimelineRenderer({
   const todayX = today >= timelineRange.startDate && today <= timelineRange.endDate
     ? header.coordinates.dateToX(today)
     : null;
-  const highlightedMonth = header.months.find((month) => month.key === today.slice(0, 7)) ?? null;
+  const highlightedMonth = header.months.find(
+    (month) => month.key === (highlightedMonthKey ?? today.slice(0, 7)),
+  ) ?? null;
   const rowsHeight = displayRows.length * PROJECT_OVERVIEW_ROW_HEIGHT;
   const todayLabel = useMemo(() => {
     const [, month, day] = today.split('-').map(Number);
@@ -1346,6 +1401,50 @@ export function TimelineRenderer({
     ]));
   }, [projectBarDragSession]);
 
+  const deleteMessage = (() => {
+    if (!deleteTarget) return '';
+    if (deleteTarget.kind === 'project') {
+      const project = graph.projects.find((item) => item.id === deleteTarget.projectId);
+      const timelineIds = new Set(graph.projectTimelines.filter((item) => item.projectId === deleteTarget.projectId).map((item) => item.id));
+      return format(t.projectManagement.deleteProjectWarning, {
+        name: project?.name ?? deleteTarget.projectId,
+        timelines: String(timelineIds.size),
+        milestones: String(graph.milestones.filter((item) => timelineIds.has(item.timelineId)).length),
+        memberships: String(graph.projectMemberships.filter((item) => item.projectId === deleteTarget.projectId).length),
+      });
+    }
+    if (deleteTarget.kind === 'timeline') {
+      const timeline = graph.projectTimelines.find((item) => item.id === deleteTarget.timelineId);
+      return format(t.projectManagement.deleteTimelineWarning, {
+        name: timeline?.name ?? deleteTarget.timelineId,
+        milestones: String(graph.milestones.filter((item) => item.timelineId === deleteTarget.timelineId).length),
+      });
+    }
+    const milestone = graph.milestones.find((item) => item.id === deleteTarget.milestoneId);
+    return format(t.projectManagement.deleteMilestoneWarning, { name: milestone?.title ?? deleteTarget.milestoneId });
+  })();
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deletingRef.current) return;
+    deletingRef.current = true; setDeleteError('');
+    try {
+      if (deleteTarget.kind === 'project' && onDeleteProject) await onDeleteProject({ projectId: deleteTarget.projectId });
+      else if (deleteTarget.kind === 'timeline' && onDeleteProjectTimeline) {
+        const timeline = graph.projectTimelines.find((item) => item.id === deleteTarget.timelineId);
+        if (!timeline) throw new Error(t.projectManagement.deleteFailed);
+        await onDeleteProjectTimeline({ projectId: timeline.projectId, timelineId: timeline.id });
+      } else if (deleteTarget.kind === 'milestone' && onDeleteMilestone) {
+        const milestone = graph.milestones.find((item) => item.id === deleteTarget.milestoneId);
+        if (!milestone) throw new Error(t.projectManagement.deleteFailed);
+        await onDeleteMilestone({ milestoneId: milestone.id, projectId: milestone.projectId, timelineId: milestone.timelineId });
+      } else throw new Error(t.projectManagement.deleteFailed);
+      quickCardController.dismiss('data-change');
+      setDrawerTarget(null); setDeleteTarget(null); setMilestoneDragSession(null); setProjectBarDragSession(null);
+      milestoneDragRef.current = null; projectBarDragRef.current = null;
+    } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : t.projectManagement.deleteFailed); }
+    finally { deletingRef.current = false; }
+  };
+
   return (
     <section
       data-project-overview-workspace
@@ -1365,11 +1464,13 @@ export function TimelineRenderer({
     >
       <div className="timeline-titlebar">
         <div className="timeline-titlebar__identity">
-          <h2>{t.projectManagement.workspaceTitle}</h2>
+          <h2>{workspaceTitle ?? t.projectManagement.workspaceTitle}</h2>
         </div>
+        {onCreateProject ? <button type="button" className="pm-crud-trigger" aria-label={t.projectManagement.createProject} onClick={() => setCreateTarget({ kind: 'project' })}><Plus size={14} aria-hidden="true" />{t.projectManagement.createProject}</button> : null}
       </div>
       <div className="timeline-toolbar">
         <div className="timeline-toolbar__left">
+          {toolbarLeading}
           <div className="project-filter-bar" role="group" aria-label={t.projectManagement.projectFilters}>
             <select
               className="project-filter-select project-filter-select--category"
@@ -1630,11 +1731,9 @@ export function TimelineRenderer({
                           }`}
                           style={geometry}
                           title={`${row.timeline.label}: ${row.timeline.startDate} — ${row.timeline.endDate}`}
-                          onPointerDown={(event) => handleProjectBarPointerDown(
-                            event,
-                            timelineIdentity,
-                            row.timeline.milestones,
-                          )}
+                          onPointerDown={onMoveProjectTimeline ? (event) => handleProjectBarPointerDown(
+                            event, timelineIdentity, row.timeline.milestones,
+                          ) : undefined}
                           onPointerMove={handleProjectBarPointerMove}
                           onPointerUp={handleProjectBarPointerUp}
                           onPointerCancel={handleProjectBarPointerCancel}
@@ -1649,11 +1748,9 @@ export function TimelineRenderer({
                               className={`timeline-lane__resize-handle timeline-lane__resize-handle--${side}${
                                 activeBarSession?.type === `project-bar-resize-${side}` ? ' is-active' : ''
                               }`}
-                              onPointerDown={(event) => handleProjectBarResizePointerDown(
-                                event,
-                                timelineIdentity,
-                                side,
-                              )}
+                              onPointerDown={onResizeProjectTimeline ? (event) => handleProjectBarResizePointerDown(
+                                event, timelineIdentity, side,
+                              ) : undefined}
                               onPointerMove={handleProjectBarPointerMove}
                               onPointerUp={handleProjectBarPointerUp}
                               onPointerCancel={handleProjectBarPointerCancel}
@@ -1672,7 +1769,7 @@ export function TimelineRenderer({
                           ? milestoneDragSession
                           : null}
                         savingMilestoneIds={savingMilestoneIds}
-                        onDragPointerDown={handleMilestoneDragPointerDown}
+                        onDragPointerDown={onMoveMilestone ? handleMilestoneDragPointerDown : undefined}
                         onDragPointerMove={handleMilestoneDragPointerMove}
                         onDragPointerUp={handleMilestoneDragPointerUp}
                         onDragPointerCancel={handleMilestoneDragPointerCancel}
@@ -1779,8 +1876,30 @@ export function TimelineRenderer({
             onUpdateProject={onUpdateProject}
             onUpdateTimeline={onUpdateProjectTimeline}
             onUpdateMilestone={onUpdateMilestone}
+            onAddMember={onAddMember}
+            onRemoveMember={onRemoveMember}
+            onChangeMemberRoles={onChangeMemberRoles}
+            onSetProjectManager={onSetProjectManager}
+            onAddTimeline={onCreateProjectTimeline ? (projectId) => setCreateTarget({ kind: 'timeline', projectId }) : undefined}
+            onAddMilestone={onCreateMilestone ? (projectId, timelineId) => setCreateTarget({ kind: 'milestone', projectId, timelineId }) : undefined}
+            onRequestDelete={onDeleteProject || onDeleteProjectTimeline || onDeleteMilestone
+              ? (target) => { setDeleteError(''); setDeleteTarget(target); }
+              : undefined}
           />
         ) : null}
+        {createTarget?.kind === 'project' && onCreateProject ? <CreateProjectDialog onClose={() => setCreateTarget(null)} onCreate={async (command) => { await onCreateProject(command); setCreateTarget(null); }} /> : null}
+        {createTarget?.kind === 'timeline' && onCreateProjectTimeline ? (() => {
+          const project = graph.projects.find((item) => item.id === createTarget.projectId);
+          if (!project) return null;
+          const existing = new Set(graph.projectTimelines.filter((item) => item.projectId === project.id).map((item) => item.lane));
+          const legalLanes = (['OEM', 'Tier1'] as const).filter((lane) => !existing.has(lane));
+          return legalLanes.length ? <CreateTimelineDialog projectId={project.id} legalLanes={legalLanes} defaultDates={project} onClose={() => setCreateTarget(null)} onCreate={async (command) => { await onCreateProjectTimeline(command); setCreateTarget(null); }} /> : null;
+        })() : null}
+        {createTarget?.kind === 'milestone' && onCreateMilestone ? (() => {
+          const timeline = graph.projectTimelines.find((item) => item.id === createTarget.timelineId && item.projectId === createTarget.projectId);
+          return timeline ? <CreateMilestoneDialog projectId={timeline.projectId} timelineId={timeline.id} defaultDate={timeline.startDate} onClose={() => setCreateTarget(null)} onCreate={async (command) => { await onCreateMilestone(command); setCreateTarget(null); }} /> : null;
+        })() : null}
+        <ConfirmDialog open={Boolean(deleteTarget)} title={t.projectManagement.confirmDelete} message={deleteError || deleteMessage} confirmText={t.projectManagement.deleteAction} cancelText={t.projectManagement.crudCancel} variant="danger" onConfirm={() => { void confirmDelete(); }} onCancel={() => { if (!deletingRef.current) setDeleteTarget(null); }} />
       </div>
       {quickCardTarget ? (
         <MilestoneQuickCard

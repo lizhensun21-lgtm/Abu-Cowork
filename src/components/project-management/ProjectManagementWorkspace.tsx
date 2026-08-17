@@ -3,10 +3,20 @@ import { LoaderCircle, TriangleAlert } from 'lucide-react';
 
 import { useI18n } from '@/i18n';
 import {
+  addProjectManagementMember,
+  changeProjectManagementMemberRoles,
+  createProjectManagementMilestone,
+  createProjectManagementProject,
+  createProjectManagementTimeline,
+  deleteProjectManagementMilestone,
+  deleteProjectManagementProject,
+  deleteProjectManagementTimeline,
   initializeProjectManagement,
   moveProjectManagementMilestone,
   moveProjectManagementTimeline,
   resizeProjectManagementTimeline,
+  removeProjectManagementMember,
+  setProjectManagementManager,
   updateProjectManagementMilestone,
   updateProjectManagementProject,
   updateProjectManagementTimeline,
@@ -81,6 +91,16 @@ export default function ProjectManagementWorkspace() {
             onUpdateProject={updateProjectManagementProject}
             onUpdateProjectTimeline={updateProjectManagementTimeline}
             onUpdateMilestone={updateProjectManagementMilestone}
+            onCreateProject={createProjectManagementProject}
+            onCreateProjectTimeline={createProjectManagementTimeline}
+            onCreateMilestone={createProjectManagementMilestone}
+            onDeleteProject={deleteProjectManagementProject}
+            onDeleteProjectTimeline={deleteProjectManagementTimeline}
+            onDeleteMilestone={deleteProjectManagementMilestone}
+            onAddMember={addProjectManagementMember}
+            onRemoveMember={removeProjectManagementMember}
+            onChangeMemberRoles={changeProjectManagementMemberRoles}
+            onSetProjectManager={setProjectManagementManager}
           />
         </div>
       )}

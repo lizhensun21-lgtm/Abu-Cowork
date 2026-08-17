@@ -971,6 +971,12 @@ describe('read-only Project Overview timeline', () => {
     expect(css).toContain('color: #f09a2a;');
     expect(css).not.toMatch(/(^|\n)\s*(html|body|:root|\.sidebar)\s*\{/);
   });
+
+  it('restores pointer hit testing for CRUD modals inside the non-interactive overlay root', () => {
+    const css = readFileSync(resolve('src/components/project-management/projectOverview.css'), 'utf8');
+    expect(css).toMatch(/\[data-project-overview-workspace\] \[data-project-overview-overlay-root\][\s\S]*?pointer-events:\s*none/u);
+    expect(css).toMatch(/\.pm-crud-backdrop[\s\S]*?pointer-events:\s*auto/u);
+  });
 });
 
 describe('Timeline visual helpers', () => {

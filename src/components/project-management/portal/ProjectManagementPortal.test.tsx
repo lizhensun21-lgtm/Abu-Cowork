@@ -13,6 +13,9 @@ import ProjectManagementPortal, {
 vi.mock('@/components/project-management/ProjectManagementWorkspace', () => ({
   default: () => <div data-testid="project-management-workspace">Project Overview Workspace</div>,
 }));
+vi.mock('@/components/project-management/meeting/MeetingWorkspace', () => ({
+  default: () => <div data-testid="meeting-workspace"><h1>Meetings</h1></div>,
+}));
 
 describe('ProjectManagementPortal', () => {
   beforeEach(() => {
@@ -41,7 +44,7 @@ describe('ProjectManagementPortal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Meetings' }));
     expect(screen.getByRole('heading', { name: 'Meetings' })).toBeInTheDocument();
-    expect(screen.getByText('This workspace is not available yet.')).toBeInTheDocument();
+    expect(screen.getByTestId('meeting-workspace')).toBeInTheDocument();
     expect(screen.queryByTestId('project-management-workspace')).not.toBeInTheDocument();
     expect(useSettingsStore.getState().viewMode).toBe('project-management');
 

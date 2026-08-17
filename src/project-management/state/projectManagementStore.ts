@@ -14,6 +14,11 @@ import {
 } from '../application/milestoneCommands';
 import { updateProject, type UpdateProjectCommand } from '../application/projectCommands';
 import {
+  addProjectMember, changeProjectMemberRoles, removeProjectMember, setProjectManager,
+  type AddProjectMemberCommand, type ChangeProjectMemberRolesCommand,
+  type RemoveProjectMemberCommand, type SetProjectManagerCommand,
+} from '../application/teamCommands';
+import {
   moveProjectTimeline,
   resizeProjectTimeline,
   updateProjectTimeline,
@@ -22,6 +27,13 @@ import {
   type UpdateProjectTimelineCommand,
 } from '../application/timelineCommands';
 import type { ProjectGraph } from '../domain/types';
+import {
+  createMilestone, createProject, createProjectTimeline,
+  deleteMilestone, deleteProject, deleteProjectTimeline,
+  type CreateMilestoneCommand, type CreateProjectCommand,
+  type CreateProjectTimelineCommand, type DeleteMilestoneCommand,
+  type DeleteProjectCommand, type DeleteProjectTimelineCommand,
+} from '../application/crudCommands';
 import { InMemoryProjectManagementRepository } from '../repository/InMemoryProjectManagementRepository';
 import type { ProjectManagementRepository } from '../repository/ProjectManagementRepository';
 
@@ -133,6 +145,36 @@ export const updateProjectManagementTimeline = (command: UpdateProjectTimelineCo
 );
 export const updateProjectManagementMilestone = (command: UpdateMilestoneCommand) => (
   runtimeStore.commitGraph(updateMilestone(command))
+);
+export const createProjectManagementProject = (command: CreateProjectCommand) => (
+  runtimeStore.commitGraph(createProject(command))
+);
+export const createProjectManagementTimeline = (command: CreateProjectTimelineCommand) => (
+  runtimeStore.commitGraph(createProjectTimeline(command))
+);
+export const createProjectManagementMilestone = (command: CreateMilestoneCommand) => (
+  runtimeStore.commitGraph(createMilestone(command))
+);
+export const deleteProjectManagementProject = (command: DeleteProjectCommand) => (
+  runtimeStore.commitGraph(deleteProject(command))
+);
+export const deleteProjectManagementTimeline = (command: DeleteProjectTimelineCommand) => (
+  runtimeStore.commitGraph(deleteProjectTimeline(command))
+);
+export const deleteProjectManagementMilestone = (command: DeleteMilestoneCommand) => (
+  runtimeStore.commitGraph(deleteMilestone(command))
+);
+export const addProjectManagementMember = (command: AddProjectMemberCommand) => (
+  runtimeStore.commitGraph(addProjectMember(command))
+);
+export const removeProjectManagementMember = (command: RemoveProjectMemberCommand) => (
+  runtimeStore.commitGraph(removeProjectMember(command))
+);
+export const changeProjectManagementMemberRoles = (command: ChangeProjectMemberRolesCommand) => (
+  runtimeStore.commitGraph(changeProjectMemberRoles(command))
+);
+export const setProjectManagementManager = (command: SetProjectManagerCommand) => (
+  runtimeStore.commitGraph(setProjectManager(command))
 );
 
 export function useProjectManagementStore<T>(

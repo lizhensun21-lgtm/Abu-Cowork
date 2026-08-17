@@ -3,6 +3,7 @@ import type {
   ProjectStatus,
 } from '../domain/types';
 import { selectProjectOrder } from './projectOrder';
+import { resolveProjectManager } from './teamPresentation';
 
 export interface ProjectListMilestoneSummary {
   readonly completed: number;
@@ -28,19 +29,6 @@ export interface ProjectListRow {
 export function selectProjectListRows(
   graph: Readonly<ProjectGraph>,
 ): readonly ProjectListRow[] {
-  const personsById = new Map(graph.persons.map((person) => [person.id, person]));
-  const managersByProjectId = new Map<string, string>();
-  for (const membership of graph.projectMemberships) {
-    if (
-      membership.status === 'active'
-      && membership.roles.includes('project_manager')
-      && !managersByProjectId.has(membership.projectId)
-    ) {
-      const person = personsById.get(membership.personId);
-      if (person) managersByProjectId.set(membership.projectId, person.name);
-    }
-  }
-
   const timelinesById = new Map(
     graph.projectTimelines.map((timeline) => [timeline.id, timeline]),
   );
@@ -73,8 +61,8 @@ export function selectProjectListRows(
       projectStatus: project.projectStatus,
       startDate: project.startDate,
       endDate: project.endDate,
-      ...(managersByProjectId.has(project.id)
-        ? { projectManagerName: managersByProjectId.get(project.id) }
+      ...(resolveProjectManager(graph, project.id)
+        ? { projectManagerName: resolveProjectManager(graph, project.id)?.person.name }
         : {}),
       ...(summary
         ? { milestoneSummary: Object.freeze({ ...summary }) }
