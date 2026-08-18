@@ -88,9 +88,9 @@ import {
 import { ProjectListRow } from '../ProjectList';
 import {
   CreateMilestoneDialog,
-  CreateProjectDialog,
   CreateTimelineDialog,
 } from '../ProjectManagementCrudDialogs';
+import { CreateProjectDialog } from '../CreateProjectDialog';
 import { ProjectManagementDrawer } from '../drawer/ProjectManagementDrawer';
 import type { ProjectManagementDrawerTarget } from '../drawer/projectManagementDrawerData';
 import {
@@ -1887,7 +1887,7 @@ export function TimelineRenderer({
               : undefined}
           />
         ) : null}
-        {createTarget?.kind === 'project' && onCreateProject ? <CreateProjectDialog onClose={() => setCreateTarget(null)} onCreate={async (command) => { await onCreateProject(command); setCreateTarget(null); }} /> : null}
+        {createTarget?.kind === 'project' && onCreateProject ? <CreateProjectDialog persons={graph.persons} onClose={() => setCreateTarget(null)} onCreate={async (command) => { await onCreateProject(command); setCreateTarget(null); }} /> : null}
         {createTarget?.kind === 'timeline' && onCreateProjectTimeline ? (() => {
           const project = graph.projects.find((item) => item.id === createTarget.projectId);
           if (!project) return null;

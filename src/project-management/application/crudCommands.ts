@@ -1,17 +1,27 @@
 import type {
+  LifecyclePhase,
   MilestoneCode,
   MilestoneStatus,
   Project,
   ProjectGraph,
+  ProjectRole,
   ProjectStatus,
+  ProjectType,
   TimelineLane,
 } from '../domain/types';
+import {
+  isProjectRole,
+  normalizeProjectRoles,
+  projectMembershipId,
+} from '../domain/projectMembership';
 import type { ProjectGraphMutation } from './projectGraphRuntime';
 
-export type ProjectManagementIdKind = 'project' | 'timeline' | 'milestone';
+export type ProjectManagementIdKind = 'project' | 'timeline' | 'milestone' | 'person';
 export type ProjectManagementIdFactory = (kind: ProjectManagementIdKind) => string;
 
-const defaultIdFactory: ProjectManagementIdFactory = (kind) => `${kind}-${globalThis.crypto.randomUUID()}`;
+export const defaultProjectManagementIdFactory: ProjectManagementIdFactory = (kind) => (
+  `${kind}-${globalThis.crypto.randomUUID()}`
+);
 
 export class ProjectManagementCrudConflictError extends Error {
   constructor(message: string) {
@@ -20,7 +30,7 @@ export class ProjectManagementCrudConflictError extends Error {
   }
 }
 
-function allocateId(
+export function allocateProjectManagementId(
   kind: ProjectManagementIdKind,
   existingIds: ReadonlySet<string>,
   idFactory: ProjectManagementIdFactory,
@@ -46,21 +56,31 @@ export interface CreateProjectCommand {
   readonly startDate: string;
   readonly endDate: string;
   readonly projectStatus: ProjectStatus;
+  readonly lifecyclePhase?: LifecyclePhase;
+  readonly summary?: string;
   readonly description?: string;
-  readonly optionalTimelineLanes?: readonly Exclude<TimelineLane, 'YD'>[];
+  readonly priority?: string;
+  readonly customer?: string;
+  readonly vehicleModel?: string;
+  readonly projectType?: ProjectType;
+  readonly projectManagerId?: string;
+  readonly initialMembers?: readonly {
+    readonly personId: string;
+    readonly roles: readonly ProjectRole[];
+  }[];
   readonly initialMilestones?: readonly (CreateMilestoneValues & { readonly lane: TimelineLane })[];
 }
 
-/** Creates the Project, mandatory YD, optional lanes, and initial Milestones in one candidate. */
+/** Creates the complete Project aggregate in one candidate graph mutation. */
 export function createProject(
   command: CreateProjectCommand,
-  idFactory: ProjectManagementIdFactory = defaultIdFactory,
+  idFactory: ProjectManagementIdFactory = defaultProjectManagementIdFactory,
 ): ProjectGraphMutation {
   return (draft) => {
     const projectIds = new Set(draft.projects.map((item) => item.id));
     const timelineIds = new Set(draft.projectTimelines.map((item) => item.id));
     const milestoneIds = new Set(draft.milestones.map((item) => item.id));
-    const projectId = allocateId('project', projectIds, idFactory);
+    const projectId = allocateProjectManagementId('project', projectIds, idFactory);
     const project: Project = {
       id: projectId,
       name: command.name,
@@ -68,14 +88,26 @@ export function createProject(
       startDate: command.startDate,
       endDate: command.endDate,
       projectStatus: command.projectStatus,
+      lifecyclePhase: command.lifecyclePhase,
+      summary: command.summary,
       description: command.description,
+      priority: command.priority,
+      customer: command.customer,
+      vehicleModel: command.vehicleModel,
+      projectType: command.projectType,
     };
     draft.projects.push(project);
 
-    const lanes: TimelineLane[] = ['YD', ...new Set(command.optionalTimelineLanes ?? [])];
+    const requestedMilestoneLanes = new Set(
+      (command.initialMilestones ?? []).map((milestone) => milestone.lane),
+    );
+    const lanes: TimelineLane[] = [
+      'YD',
+      ...(['OEM', 'Tier1'] as const).filter((lane) => requestedMilestoneLanes.has(lane)),
+    ];
     const timelineByLane = new Map<TimelineLane, string>();
     for (const lane of lanes) {
-      const timelineId = allocateId('timeline', timelineIds, idFactory);
+      const timelineId = allocateProjectManagementId('timeline', timelineIds, idFactory);
       timelineIds.add(timelineId);
       timelineByLane.set(lane, timelineId);
       draft.projectTimelines.push({
@@ -95,9 +127,52 @@ export function createProject(
       if (!timelineId) {
         throw new ProjectManagementCrudConflictError(`Initial ${lane} Timeline does not exist`);
       }
-      const id = allocateId('milestone', milestoneIds, idFactory);
+      const id = allocateProjectManagementId('milestone', milestoneIds, idFactory);
       milestoneIds.add(id);
       draft.milestones.push({ id, projectId, timelineId, lane, ...values });
+    }
+
+    const personIds = new Set(draft.persons.map((person) => person.id));
+    const rolesByPersonId = new Map<string, ProjectRole[]>();
+    for (const member of command.initialMembers ?? []) {
+      if (!personIds.has(member.personId)) {
+        throw new ProjectManagementCrudConflictError('Initial member must reference an existing Person');
+      }
+      if (member.roles.some((role) => !isProjectRole(role))) {
+        throw new ProjectManagementCrudConflictError('Initial member has an invalid Project role');
+      }
+      if (member.roles.includes('project_manager')) {
+        throw new ProjectManagementCrudConflictError(
+          'Project Manager must be selected through projectManagerId',
+        );
+      }
+      const memberRoles: readonly ProjectRole[] = member.roles.length ? member.roles : ['member'];
+      rolesByPersonId.set(
+        member.personId,
+        normalizeProjectRoles([
+          ...(rolesByPersonId.get(member.personId) ?? []),
+          ...memberRoles,
+        ]),
+      );
+    }
+    if (command.projectManagerId) {
+      if (!personIds.has(command.projectManagerId)) {
+        throw new ProjectManagementCrudConflictError('Project Manager must reference an existing Person');
+      }
+      rolesByPersonId.set(command.projectManagerId, normalizeProjectRoles([
+        'project_manager',
+        ...(rolesByPersonId.get(command.projectManagerId) ?? []),
+      ]));
+    }
+    draft.projectTeams.push({ projectId });
+    for (const [personId, roles] of rolesByPersonId) {
+      draft.projectMemberships.push({
+        id: projectMembershipId(projectId, personId),
+        projectId,
+        personId,
+        roles,
+        status: 'active',
+      });
     }
     return draft;
   };
@@ -114,7 +189,7 @@ export interface CreateProjectTimelineCommand {
 
 export function createProjectTimeline(
   command: CreateProjectTimelineCommand,
-  idFactory: ProjectManagementIdFactory = defaultIdFactory,
+  idFactory: ProjectManagementIdFactory = defaultProjectManagementIdFactory,
 ): ProjectGraphMutation {
   return (draft) => {
     if (!draft.projects.some((item) => item.id === command.projectId)) {
@@ -123,7 +198,7 @@ export function createProjectTimeline(
     if (draft.projectTimelines.some((item) => item.projectId === command.projectId && item.lane === command.lane)) {
       throw new ProjectManagementCrudConflictError(`Project already has a ${command.lane} Timeline`);
     }
-    const id = allocateId('timeline', new Set(draft.projectTimelines.map((item) => item.id)), idFactory);
+    const id = allocateProjectManagementId('timeline', new Set(draft.projectTimelines.map((item) => item.id)), idFactory);
     draft.projectTimelines.push({ ...command, id, keyResources: [...(command.keyResources ?? [])] });
     return draft;
   };
@@ -136,14 +211,14 @@ export interface CreateMilestoneCommand extends CreateMilestoneValues {
 
 export function createMilestone(
   command: CreateMilestoneCommand,
-  idFactory: ProjectManagementIdFactory = defaultIdFactory,
+  idFactory: ProjectManagementIdFactory = defaultProjectManagementIdFactory,
 ): ProjectGraphMutation {
   return (draft) => {
     const timeline = draft.projectTimelines.find((item) => item.id === command.timelineId);
     if (!timeline || timeline.projectId !== command.projectId) {
       throw new ProjectManagementCrudConflictError('Milestone Project/Timeline relationship is invalid');
     }
-    const id = allocateId('milestone', new Set(draft.milestones.map((item) => item.id)), idFactory);
+    const id = allocateProjectManagementId('milestone', new Set(draft.milestones.map((item) => item.id)), idFactory);
     draft.milestones.push({ ...command, id, lane: timeline.lane });
     return draft;
   };

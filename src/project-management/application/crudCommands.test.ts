@@ -38,23 +38,87 @@ function ids(...values: string[]): ProjectManagementIdFactory {
 }
 
 describe('project management CRUD commands', () => {
-  it('creates a Project and mandatory YD atomically without inferring a manager', () => {
+  it('creates Project, derived Timelines, Milestones, Team, and Memberships in one candidate', () => {
     const source = graph();
     const mutation = createProject({
       name: 'Beta', projectCode: 'B-01', startDate: '2026-03-01', endDate: '2026-09-30',
-      projectStatus: 'planning', optionalTimelineLanes: ['Tier1'],
-      initialMilestones: [{ lane: 'YD', title: 'Kickoff', date: '2026-03-01', code: 'G0' }],
-    }, ids('p2', 't2-yd', 't2-tier1', 'm2'));
+      projectStatus: 'planning', lifecyclePhase: 'concept', summary: 'Launch', priority: 'high',
+      customer: 'Customer', vehicleModel: 'X1', projectType: 'development',
+      projectManagerId: 'person-1',
+      initialMembers: [{ personId: 'person-1', roles: ['system_owner'] }],
+      initialMilestones: [
+        { lane: 'YD', title: 'Kickoff', date: '2026-03-01', code: 'G0' },
+        { lane: 'Tier1', title: 'Supplier gate', date: '2026-04-01', code: '', note: 'Review' },
+      ],
+    }, ids('p2', 't2-yd', 't2-tier1', 'm2', 'm3'));
     const candidate = mutation(structuredClone(source));
     expect(source.projects).toHaveLength(1);
-    expect(candidate.projects.find((item) => item.id === 'p2')).toMatchObject({ name: 'Beta' });
+    expect(candidate.projects.find((item) => item.id === 'p2')).toMatchObject({
+      name: 'Beta', lifecyclePhase: 'concept', summary: 'Launch', priority: 'high',
+      customer: 'Customer', vehicleModel: 'X1', projectType: 'development',
+    });
     expect(candidate.projectTimelines.filter((item) => item.projectId === 'p2')).toEqual([
       expect.objectContaining({ id: 't2-yd', lane: 'YD', startDate: '2026-03-01', endDate: '2026-09-30' }),
       expect.objectContaining({ id: 't2-tier1', lane: 'Tier1' }),
     ]);
-    expect(candidate.projectMemberships).toEqual(source.projectMemberships);
-    expect(candidate.projectTeams).toEqual(source.projectTeams);
+    expect(candidate.milestones.filter((item) => item.projectId === 'p2')).toEqual([
+      expect.objectContaining({ id: 'm2', timelineId: 't2-yd', lane: 'YD', title: 'Kickoff' }),
+      expect.objectContaining({ id: 'm3', timelineId: 't2-tier1', lane: 'Tier1', title: 'Supplier gate', note: 'Review' }),
+    ]);
+    expect(candidate.projectMemberships.at(-1)).toMatchObject({
+      projectId: 'p2', personId: 'person-1', roles: ['project_manager', 'system_owner'], status: 'active',
+    });
+    expect(candidate.projectMemberships.filter((item) => item.projectId === 'p2')).toHaveLength(1);
+    expect(candidate.projectTeams.at(-1)).toEqual({ projectId: 'p2' });
     expect(validateProjectGraph(candidate).valid).toBe(true);
+  });
+
+  it('does not create optional Timelines without a matching initial Milestone', () => {
+    const candidate = createProject({
+      name: 'No plan yet', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      initialMilestones: [], initialMembers: [],
+    }, ids('p2', 't2-yd'))(graph());
+    expect(candidate.projectTimelines.filter((item) => item.projectId === 'p2').map((item) => item.lane)).toEqual(['YD']);
+    expect(candidate.projectTeams.at(-1)).toEqual({ projectId: 'p2' });
+  });
+
+  it('rejects Create drafts that reference a non-existent Person', () => {
+    expect(() => createProject({
+      name: 'Bad team', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      projectManagerId: 'missing-person',
+    }, ids('p2', 't2-yd'))(graph())).toThrow('existing Person');
+  });
+
+  it('creates one active regular-member Membership when no specialized role is selected', () => {
+    const candidate = createProject({
+      name: 'Regular team', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      initialMembers: [{ personId: 'person-1', roles: [] }],
+    }, ids('p2', 't2-yd'))(graph());
+    expect(candidate.projectMemberships.filter((item) => item.projectId === 'p2')).toEqual([
+      expect.objectContaining({ personId: 'person-1', roles: ['member'], status: 'active' }),
+    ]);
+  });
+
+  it('merges duplicate Person drafts into one Membership and reserves PM selection for one field', () => {
+    const candidate = createProject({
+      name: 'Merged team', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      projectManagerId: 'person-1',
+      initialMembers: [
+        { personId: 'person-1', roles: ['software_owner'] },
+        { personId: 'person-1', roles: ['test_owner'] },
+      ],
+    }, ids('p2', 't2-yd'))(graph());
+    expect(candidate.projectMemberships.filter((item) => item.projectId === 'p2')).toEqual([
+      expect.objectContaining({
+        personId: 'person-1', roles: ['project_manager', 'software_owner', 'test_owner'], status: 'active',
+      }),
+    ]);
+    expect(validateProjectGraph(candidate).valid).toBe(true);
+
+    expect(() => createProject({
+      name: 'Invalid managers', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      initialMembers: [{ personId: 'person-1', roles: ['project_manager'] }],
+    }, ids('p3', 't3-yd'))(graph())).toThrow('projectManagerId');
   });
 
   it('prohibits duplicate lanes and a second YD through the command surface', () => {
@@ -104,17 +168,26 @@ describe('project management CRUD commands', () => {
     const repository: ProjectManagementRepository = { load: vi.fn(), save };
     const result = await commitProjectGraphMutation(repository, source, createProject({
       name: 'Beta', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      projectManagerId: 'person-1', initialMembers: [{ personId: 'person-1', roles: [] }],
     }, ids('p2', 't2')));
     expect(save).toHaveBeenCalledOnce();
     expect(source.projects).toHaveLength(1);
+    expect(source.projectMemberships).toHaveLength(1);
     expect(result.projects).toHaveLength(2);
+    expect(result.projectMemberships.filter((item) => item.projectId === 'p2')).toEqual([
+      expect.objectContaining({ personId: 'person-1', roles: ['project_manager'], status: 'active' }),
+    ]);
 
     await expect(commitProjectGraphMutation(repository, source, createProject({
       name: '', startDate: '2026-09-30', endDate: '2026-03-01', projectStatus: 'planning',
     }, ids('p3', 't3')))).rejects.toThrow();
     expect(save).toHaveBeenCalledOnce();
     const failingRepository: ProjectManagementRepository = { load: vi.fn(), save: vi.fn().mockRejectedValue(new Error('disk')) };
-    await expect(commitProjectGraphMutation(failingRepository, source, deleteProject({ projectId: 'p1' }))).rejects.toThrow('disk');
+    await expect(commitProjectGraphMutation(failingRepository, source, createProject({
+      name: 'Rollback team', startDate: '2026-03-01', endDate: '2026-09-30', projectStatus: 'planning',
+      projectManagerId: 'person-1', initialMembers: [{ personId: 'person-1', roles: ['software_owner'] }],
+    }, ids('p4', 't4')))).rejects.toThrow('disk');
     expect(source.projects).toHaveLength(1);
+    expect(source.projectMemberships).toHaveLength(1);
   });
 });

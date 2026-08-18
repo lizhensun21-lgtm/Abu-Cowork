@@ -16,6 +16,9 @@ vi.mock('@/components/project-management/ProjectManagementWorkspace', () => ({
 vi.mock('@/components/project-management/meeting/MeetingWorkspace', () => ({
   default: () => <div data-testid="meeting-workspace"><h1>Meetings</h1></div>,
 }));
+vi.mock('./ProjectManagementPortalModules', () => ({
+  default: ({ view }: { view: string }) => <div data-testid={`portal-module-${view}`}>{view}</div>,
+}));
 
 describe('ProjectManagementPortal', () => {
   beforeEach(() => {
@@ -50,6 +53,18 @@ describe('ProjectManagementPortal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Project Overview' }));
     expect(screen.getByTestId('project-management-workspace')).toBeInTheDocument();
+  });
+
+  it('routes every I10 entry to a real module while preserving sidebar state', async () => {
+    const user = userEvent.setup();
+    render(<ProjectManagementPortal />);
+    await user.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+    for (const [label, view] of [['Calendar', 'calendar'], ['Ledger', 'ledger'], ['Resources', 'resources'], ['Members', 'members']] as const) {
+      await user.click(screen.getByRole('button', { name: label }));
+      expect(screen.getByTestId(`portal-module-${view}`)).toBeInTheDocument();
+      expect(screen.getByRole('complementary', { name: 'Project Management navigation' })).toHaveAttribute('data-collapsed', 'true');
+      expect(useSettingsStore.getState().viewMode).toBe('project-management');
+    }
   });
 
   it('returns to Original Abu through the existing viewMode action', async () => {

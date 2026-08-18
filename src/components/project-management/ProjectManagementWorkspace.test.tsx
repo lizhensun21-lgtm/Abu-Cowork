@@ -215,7 +215,7 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     const originalGraph = runtime.state.graph;
     render(<ProjectManagementWorkspace />);
     fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'Draft only' } });
+    fireEvent.change(screen.getByLabelText('Project *'), { target: { value: 'Draft only' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(runtime.createProject).not.toHaveBeenCalled();
     expect(runtime.state.graph).toBe(originalGraph);
@@ -231,9 +231,9 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create project' }));
     const commitsBeforeTyping = subtreeCommits;
-    await user.type(screen.getByLabelText('Project'), '12345678901234567890');
+    await user.type(screen.getByLabelText('Project *'), '12345678901234567890');
 
-    expect(screen.getByLabelText('Project')).toHaveValue('12345678901234567890');
+    expect(screen.getByLabelText('Project *')).toHaveValue('12345678901234567890');
     expect(subtreeCommits - commitsBeforeTyping).toBeLessThanOrEqual(20);
     expect(runtime.selectorCalls).toBe(initialSelectorCalls);
     expect(runtime.createProject).not.toHaveBeenCalled();
@@ -243,8 +243,8 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create project' }));
     const dialog = screen.getByRole('dialog', { name: 'Create project' });
-    await user.type(within(dialog).getByLabelText('Project'), 'Close remains active');
-    await user.click(within(dialog).getByRole('button', { name: 'Create project' }));
+    await user.type(within(dialog).getByLabelText('Project *'), 'Close remains active');
+    await user.click(within(dialog).getByRole('button', { name: 'Create project — Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Create project' })).not.toBeInTheDocument();
     expect(runtime.createProject).not.toHaveBeenCalled();
     expect(runtime.state.graph).toBe(originalGraph);
@@ -254,12 +254,12 @@ describe('ProjectManagementWorkspace runtime bootstrap', () => {
     runtime.state = { ...runtime.state, initializationStatus: 'ready' };
     render(<ProjectManagementWorkspace />);
     fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'Created Project' } });
-    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-09-01' } });
-    fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-12-31' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    expect(screen.getByText('The required YD timeline will be created automatically with the project dates.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    fireEvent.change(screen.getByLabelText('Project *'), { target: { value: 'Created Project' } });
+    fireEvent.change(screen.getByLabelText('Start date *'), { target: { value: '2026-09-01' } });
+    fireEvent.change(screen.getByLabelText('End date *'), { target: { value: '2026-12-31' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText(/YD is created automatically/)).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Create project' })).getByRole('button', { name: 'Create project' }));
     await waitFor(() => expect(runtime.createProject).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Created Project', startDate: '2026-09-01', endDate: '2026-12-31', projectStatus: 'planning',
     })));

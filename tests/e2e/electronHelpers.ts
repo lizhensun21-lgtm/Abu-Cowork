@@ -77,11 +77,15 @@ export function removeElectronDataRoot(dataRoot: ElectronDataRoot): void {
 export async function launchAbuElectron(dataRoot = createElectronDataRoot()): Promise<LaunchedApp> {
   fs.mkdirSync(dataRoot.userDataDir, { recursive: true });
   fs.mkdirSync(dataRoot.appDataDir, { recursive: true });
+  const launchEnvironment = { ...process.env };
+  // A host-level ELECTRON_RUN_AS_NODE must never leak into the Electron child.
+  // Keep the host/system environment untouched and narrow the override to this launch.
+  delete launchEnvironment.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({
     args: [MAIN_ENTRY, `--user-data-dir=${dataRoot.userDataDir}`],
     cwd: REPO_ROOT,
     env: {
-      ...process.env,
+      ...launchEnvironment,
       [E2E_APP_DATA_ROOT_ENV]: dataRoot.appDataDir,
       [E2E_SIDECAR_CRASH_TOKEN_ENV]: dataRoot.sidecarCrashToken,
     },

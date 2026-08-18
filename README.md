@@ -284,6 +284,29 @@ Create a weekly report PPT for this week
 | Testing | Vitest + happy-dom (covers core store / agent / skill / memdir modules) |
 | Evaluation | Built-in OpenAI-protocol tool-selection eval runner (`npm run eval:tool-selection`) |
 
+The Abu Project Management Web-to-Desktop integration baseline is closed as
+**V1 Integration RC1** (not V1 Feature Complete). Its validated graph boundary,
+implemented scope, remaining V1 work, known issues, and versioned
+persistence/recovery contract are documented in
+[Project Management V1 Integration RC1](docs/PROJECT-MANAGEMENT.md).
+
+RC1 confirms the Portal and its six entries, Project Overview and Timeline
+interactions, Milestones, drawers and CRUD dialogs, Person/Team/Membership and
+Project Manager flows, isolated Meeting snapshots, Calendar/Ledger/Resources/
+Members projections, and versioned JSON persistence with restart recovery.
+The production `ProjectGraph` is the single source of truth; application
+commands normalize and validate a candidate graph, save it through the
+repository, and only then commit runtime state. Abu Account is not a Project
+Management Person, Meeting never replaces or saves the production graph, and
+domain dates retain canonical UTC `YYYY-MM-DD` calendar-date semantics.
+
+Known RC1 limitation: right-side Timeline dynamic-range extension can cause a
+minor custom-scrollbar thumb jump without breaking pan, zoom, drag, resize, or
+range extension. Risk, Issue, and Action workflows remain V1 work and have not
+started. Collaborative synchronization, conflict resolution, multi-user
+authorization, and all other V2/V3 scope are future work and explicitly out of
+scope for this baseline.
+
 ## Build from Source
 
 ### Prerequisites

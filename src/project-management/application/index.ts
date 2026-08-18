@@ -12,6 +12,7 @@ export {
 } from './projectList';
 export { selectProjectOrder } from './projectOrder';
 export * from './crudCommands';
+export * from './personCommands';
 export {
   MilestoneMutationConflictError,
   moveMilestone,
@@ -35,3 +36,4 @@ export {
 } from './timelineCommands';
 export * from './teamCommands';
 export * from './teamPresentation';
+export * from './portalProjections';

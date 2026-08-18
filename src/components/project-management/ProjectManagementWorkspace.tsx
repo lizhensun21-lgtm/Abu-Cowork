@@ -82,7 +82,14 @@ export default function ProjectManagementWorkspace() {
           </div>
         </div>
       ) : (
-        <div className="min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col">
+          {initializationError ? (
+            <div className="flex flex-none items-start gap-2 border-b border-[var(--abu-warning)] bg-[var(--abu-warning-bg)] px-4 py-2 text-minor text-[var(--abu-warning)]" role="alert">
+              <TriangleAlert className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+              <span><strong>{t.projectManagement.persistenceWarning}.</strong> {initializationError}</span>
+            </div>
+          ) : null}
+          <div className="min-h-0 flex-1">
           <TimelineRenderer
             graph={projectGraph}
             onMoveMilestone={moveProjectManagementMilestone}
@@ -102,6 +109,7 @@ export default function ProjectManagementWorkspace() {
             onChangeMemberRoles={changeProjectManagementMemberRoles}
             onSetProjectManager={setProjectManagementManager}
           />
+          </div>
         </div>
       )}
     </section>

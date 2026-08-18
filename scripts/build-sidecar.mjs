@@ -50,7 +50,8 @@ const root = path.resolve(__dirname, '..');
 const srcDir = path.resolve(root, 'src');
 
 /**
- * `vite.config.ts` substitutes `__APP_VERSION__`/`__ENTERPRISE_BUILD__` as
+ * `vite.config.ts` substitutes the version/distribution globals and
+ * `__ENTERPRISE_BUILD__` as
  * build-time `define`s for the webview bundle — esbuild's sidecar bundle
  * doesn't share that config, so without an equivalent `define` here these
  * two globals are left as bare undefined references, which THROW at sidecar
@@ -63,6 +64,19 @@ const srcDir = path.resolve(root, 'src');
  * reference would be the same class of startup crash.
  */
 const packageJson = JSON.parse(readFileSync(path.resolve(root, 'package.json'), 'utf-8'));
+const buildVersion = process.env.ABU_BUILD_VERSION?.trim() || packageJson.version;
+const distributions = new Set(['upstream-official', 'abu-project-management', 'source']);
+const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-management';
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.34.2';
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(buildVersion)) {
+  throw new Error(`[build-sidecar] Invalid ABU_BUILD_VERSION: ${buildVersion}`);
+}
+if (!distributions.has(distribution)) {
+  throw new Error(`[build-sidecar] Invalid ABU_DISTRIBUTION: ${distribution}`);
+}
+if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
+  throw new Error(`[build-sidecar] Invalid ABU_UPSTREAM_BASE_VERSION: ${upstreamBaseVersion}`);
+}
 
 /**
  * Shim map: resolved absolute path of the REAL module -> resolved absolute
@@ -402,7 +416,9 @@ async function main() {
     // sidecar/index.mjs standalone, with no node_modules alongside it.
     alias: { '@': srcDir },
     define: {
-      __APP_VERSION__: JSON.stringify(packageJson.version),
+      __APP_VERSION__: JSON.stringify(buildVersion),
+      __ABU_DISTRIBUTION__: JSON.stringify(distribution),
+      __ABU_UPSTREAM_BASE_VERSION__: JSON.stringify(upstreamBaseVersion),
       __ENTERPRISE_BUILD__: JSON.stringify(false),
     },
     plugins: [shimPlugin, bundleGraphGuardPlugin],

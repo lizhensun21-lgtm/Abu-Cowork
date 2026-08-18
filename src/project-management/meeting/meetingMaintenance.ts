@@ -31,7 +31,13 @@ export function addMeetingProject(state: MeetingMaintenanceState, command: Creat
   const projectKey = key('project');
   const candidate = clone(state.working);
   candidate.projects.push({ project_key: projectKey, project_name: command.name, project_manager: '', status: command.projectStatus === 'closed' ? 'completed' : command.projectStatus === 'cancelled' ? 'paused' : command.projectStatus, project_code: command.projectCode, project_status: command.projectStatus, priority: '', model_id: '', note: command.description ?? '' });
-  const lanes: TimelineLane[] = ['YD', ...new Set(command.optionalTimelineLanes ?? [])];
+  const requestedMilestoneLanes = new Set(
+    (command.initialMilestones ?? []).map((milestone) => milestone.lane),
+  );
+  const lanes: TimelineLane[] = [
+    'YD',
+    ...(['OEM', 'Tier1'] as const).filter((lane) => requestedMilestoneLanes.has(lane)),
+  ];
   const timelineByLane = new Map<string, string>();
   for (const lane of lanes) {
     const timelineKey = `${projectKey}-${lane}`;

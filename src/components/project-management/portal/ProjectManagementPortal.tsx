@@ -15,6 +15,7 @@ import {
 import DefaultUserAvatar from '@/components/common/DefaultUserAvatar';
 import ProjectManagementWorkspace from '@/components/project-management/ProjectManagementWorkspace';
 import MeetingWorkspace from '@/components/project-management/meeting/MeetingWorkspace';
+import ProjectManagementPortalModules from './ProjectManagementPortalModules';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -36,17 +37,6 @@ type PortalNavigationItem = {
   label: string;
 };
 
-function PortalPlaceholder({ title, message }: { title: string; message: string }) {
-  return (
-    <section className="flex h-full items-center justify-center px-8 text-center">
-      <div className="max-w-sm">
-        <h1 className="text-title font-semibold text-[var(--abu-text-primary)]">{title}</h1>
-        <p className="mt-2 text-body text-[var(--abu-text-muted)]">{message}</p>
-      </div>
-    </section>
-  );
-}
-
 export default function ProjectManagementPortal() {
   const { t } = useI18n();
   const [activeView, setActiveView] = useState<ProjectManagementPortalView>(
@@ -64,8 +54,6 @@ export default function ProjectManagementPortal() {
     { view: 'resources', icon: FolderKanban, label: t.projectManagementPortal.resources },
     { view: 'members', icon: Users, label: t.projectManagementPortal.members },
   ];
-  const activeItem = navigation.find((item) => item.view === activeView) ?? navigation[0];
-
   return (
     <div
       data-project-management-portal
@@ -180,9 +168,7 @@ export default function ProjectManagementPortal() {
       >
         {activeView === 'overview' ? <ProjectManagementWorkspace /> : activeView === 'meetings' ? (
           <MeetingWorkspace />
-        ) : (
-          <PortalPlaceholder title={activeItem.label} message={t.projectManagementPortal.notAvailable} />
-        )}
+        ) : <ProjectManagementPortalModules view={activeView} />}
       </main>
     </div>
   );
