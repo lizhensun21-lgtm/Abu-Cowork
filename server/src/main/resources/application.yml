@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: abu-pm-server
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  address: ${SERVER_HOST:127.0.0.1}
+  port: ${SERVER_PORT:8080}
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    root: INFO
+    com.abu.server: INFO
