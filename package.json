@@ -8,6 +8,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "dev:full": "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\start-abu-dev.ps1",
     "dev:enterprise": "ABU_BUILD_TARGET=enterprise vite",
     "build": "npm run gen:models:check && tsc -b && vite build",
     "build:enterprise": "ABU_BUILD_TARGET=enterprise tsc -b && ABU_BUILD_TARGET=enterprise vite build",

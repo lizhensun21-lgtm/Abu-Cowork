@@ -16,6 +16,11 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -26,7 +31,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "dev"})
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(ServerFoundationIntegrationTest.ConventionTestConfiguration.class)
 class ServerFoundationIntegrationTest {
@@ -90,6 +95,28 @@ class ServerFoundationIntegrationTest {
     }
 
     @Test
+    void developmentCorsAllowsCurrentElectronAndViteOrigins() {
+        assertAllowedOrigin("null");
+        assertAllowedOrigin("http://127.0.0.1:5173");
+        assertAllowedOrigin("http://localhost:5173");
+    }
+
+    @Test
+    void developmentCorsDoesNotAllowArbitraryOrigins() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setOrigin("https://untrusted.example");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "http://127.0.0.1:" + port + "/api/v1/health",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getHeaders().getAccessControlAllowOrigin()).isNull();
+    }
+
+    @Test
     void myBatisUsesTheRealPostgresTransactionAndRollsBack() {
         UUID id = UUID.randomUUID();
 
@@ -143,6 +170,24 @@ class ServerFoundationIntegrationTest {
         assertThatThrownBy(() -> conventionService.update(id, "stale", 0))
                 .isInstanceOf(StaleVersionException.class);
         assertThat(conventionService.find(id)).isEqualTo(updated);
+    }
+
+    private void assertAllowedOrigin(String origin) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setOrigin(origin);
+        headers.setAccessControlRequestMethod(HttpMethod.GET);
+        headers.setAccessControlRequestHeaders(java.util.List.of("X-Trace-Id"));
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "http://127.0.0.1:" + port + "/api/v1/health",
+                HttpMethod.OPTIONS,
+                new HttpEntity<>(headers),
+                String.class);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(response.getHeaders().getAccessControlAllowOrigin()).isEqualTo(origin);
+        assertThat(response.getHeaders().getAccessControlAllowMethods()).contains(HttpMethod.GET);
+        assertThat(response.getHeaders().getAccessControlAllowHeaders()).contains("X-Trace-Id");
     }
 
     @TestConfiguration(proxyBeanMethods = false)

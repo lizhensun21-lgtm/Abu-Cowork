@@ -2,6 +2,26 @@
 
 This directory is the parallel V1 server foundation. The Electron desktop still uses the sealed RC1 JSON repository; there is no server cutover or dual-write in F1A.
 
+## Desktop connectivity foundation
+
+F1C adds a health-only Desktop connection probe. It does not add Project APIs,
+change the canonical repository, or write PM business data to PostgreSQL. The
+Electron renderer receives its server address through the build-time
+`VITE_PM_API_BASE_URL` configuration entry; PM feature code must use
+`resolvePmApiBaseUrl()` rather than reading the environment directly.
+
+The current Electron development shell loads the renderer from `file://`, which
+sends the literal `null` CORS origin. The Spring `dev` profile therefore allows
+only `null`, `http://127.0.0.1:5173`, and `http://localhost:5173` for
+`/api/v1/**`, with the PM JSON methods and `Content-Type`/`X-Trace-Id` headers.
+No wildcard is used, and this CORS mapping is absent outside the `dev` profile.
+
+Packaged production origin selection remains a deployment decision. Before a
+canonical or authenticated Server rollout, use an explicit trusted renderer
+origin (for example, a registered custom scheme) or an equally narrow existing
+privileged transport; do not promote the development `null` origin allowance to
+production.
+
 Requirements: Java 21 and Docker Desktop (or another Docker-compatible runtime). Maven is supplied through the wrapper and downloads its pinned wrapper JAR and Maven distribution on first use.
 
 From the repository root, start each process in its own PowerShell window:

@@ -10,6 +10,19 @@ import ProjectManagementPortal, {
   DEFAULT_PROJECT_MANAGEMENT_PORTAL_VIEW,
 } from './ProjectManagementPortal';
 
+const { initializePmServerConnection } = vi.hoisted(() => ({
+  initializePmServerConnection: vi.fn().mockResolvedValue(undefined),
+}));
+const { refreshPmServerConnection } = vi.hoisted(() => ({
+  refreshPmServerConnection: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@/project-management/api/pmServerConnection', () => ({
+  initializePmServerConnection,
+  refreshPmServerConnection,
+  usePmServerConnectionState: () => 'unknown',
+}));
+
 vi.mock('@/components/project-management/ProjectManagementWorkspace', () => ({
   default: () => <div data-testid="project-management-workspace">Project Overview Workspace</div>,
 }));
@@ -39,6 +52,9 @@ describe('ProjectManagementPortal', () => {
       .toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('project-management-workspace')).toBeInTheDocument();
     expect(screen.queryByText('New Task')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-project-management-portal]'))
+      .toHaveAttribute('data-pm-server-connection', 'unknown');
+    expect(initializePmServerConnection).toHaveBeenCalledTimes(1);
   });
 
   it('switches local portal views without changing the top-level Desktop view mode', async () => {
@@ -53,6 +69,14 @@ describe('ProjectManagementPortal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Project Overview' }));
     expect(screen.getByTestId('project-management-workspace')).toBeInTheDocument();
+  });
+
+  it('refreshes health on focus without polling or touching ProjectGraph', () => {
+    render(<ProjectManagementPortal />);
+
+    window.dispatchEvent(new Event('focus'));
+
+    expect(refreshPmServerConnection).toHaveBeenCalledTimes(1);
   });
 
   it('routes every I10 entry to a real module while preserving sidebar state', async () => {

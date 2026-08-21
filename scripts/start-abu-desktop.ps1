@@ -13,9 +13,22 @@ try {
     }
     Push-Location $repoRoot
     try {
-        & npm.cmd run electron:dev
-        if ($LASTEXITCODE -ne 0) {
-            throw "Abu Desktop exited with code $LASTEXITCODE."
+        # ELECTRON_RUN_AS_NODE makes electron.exe behave as node.exe. Clear it
+        # only in this script process while launching the npm/Electron child;
+        # the caller and User/Machine environment are never modified.
+        $previousElectronRunAsNode = $env:ELECTRON_RUN_AS_NODE
+        try {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            & npm.cmd run electron:dev
+            if ($LASTEXITCODE -ne 0) {
+                throw "Abu Desktop exited with code $LASTEXITCODE."
+            }
+        } finally {
+            if ($null -eq $previousElectronRunAsNode) {
+                Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            } else {
+                $env:ELECTRON_RUN_AS_NODE = $previousElectronRunAsNode
+            }
         }
     } finally {
         Pop-Location

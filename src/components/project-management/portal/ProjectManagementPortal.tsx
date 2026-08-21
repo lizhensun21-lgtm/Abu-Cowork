@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import {
   ArrowLeft,
   BookOpenText,
@@ -19,6 +19,11 @@ import ProjectManagementPortalModules from './ProjectManagementPortalModules';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settingsStore';
+import {
+  initializePmServerConnection,
+  refreshPmServerConnection,
+  usePmServerConnectionState,
+} from '@/project-management/api/pmServerConnection';
 import { usePortalUserAdapter } from './PortalUserAdapter';
 
 export type ProjectManagementPortalView =
@@ -45,6 +50,16 @@ export default function ProjectManagementPortal() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const setViewMode = useSettingsStore((state) => state.setViewMode);
   const { user, openAccountSettings } = usePortalUserAdapter();
+  const serverConnectionStatus = usePmServerConnectionState((state) => state.status);
+
+  useEffect(() => {
+    void initializePmServerConnection();
+    const refreshOnFocus = () => {
+      void refreshPmServerConnection();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, []);
 
   const navigation: PortalNavigationItem[] = [
     { view: 'overview', icon: LayoutDashboard, label: t.projectManagementPortal.overview },
@@ -57,6 +72,7 @@ export default function ProjectManagementPortal() {
   return (
     <div
       data-project-management-portal
+      data-pm-server-connection={serverConnectionStatus}
       data-electron-no-drag
       className="flex min-h-0 w-full flex-1 overflow-hidden bg-[var(--abu-bg-canvas)]"
     >
