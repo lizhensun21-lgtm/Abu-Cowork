@@ -1,7 +1,11 @@
 package com.abu.server.common.api;
 
 public enum ErrorCode {
+    REQUEST_MALFORMED,
     VALIDATION_FAILED,
+    RESOURCE_NOT_FOUND,
+    BUSINESS_CONFLICT,
+    STALE_VERSION,
     DATABASE_UNAVAILABLE,
     INTERNAL_ERROR
 }

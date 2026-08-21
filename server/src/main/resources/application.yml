@@ -9,12 +9,24 @@ spring:
     enabled: true
     locations: classpath:db/migration
   jackson:
+    deserialization:
+      fail-on-unknown-properties: true
     serialization:
       write-dates-as-timestamps: false
+    time-zone: UTC
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
 
 server:
   address: ${SERVER_HOST:127.0.0.1}
   port: ${SERVER_PORT:8080}
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 logging:
   pattern:

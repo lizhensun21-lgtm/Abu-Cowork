@@ -1,6 +1,7 @@
 package com.abu.server.common.api;
 
 import java.util.List;
+import java.util.Objects;
 
 public record ApiErrorResponse(
         String code,
@@ -8,6 +9,18 @@ public record ApiErrorResponse(
         List<FieldErrorDetail> fieldErrors,
         String traceId) {
 
-    public record FieldErrorDetail(String field, String message) {
+    public ApiErrorResponse {
+        code = Objects.requireNonNull(code, "code");
+        message = Objects.requireNonNull(message, "message");
+        fieldErrors = fieldErrors == null ? List.of() : List.copyOf(fieldErrors);
+        traceId = Objects.requireNonNull(traceId, "traceId");
+    }
+
+    public record FieldErrorDetail(String field, String code, String message) {
+        public FieldErrorDetail {
+            field = Objects.requireNonNull(field, "field");
+            code = Objects.requireNonNull(code, "code");
+            message = Objects.requireNonNull(message, "message");
+        }
     }
 }

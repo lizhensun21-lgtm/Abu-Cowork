@@ -1,7 +1,9 @@
 package com.abu.server.foundation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.abu.server.common.exception.StaleVersionException;
 import com.abu.server.health.HealthResponse;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
@@ -11,6 +13,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -23,6 +28,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(ServerFoundationIntegrationTest.ConventionTestConfiguration.class)
 class ServerFoundationIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17.6-alpine")
@@ -46,6 +52,8 @@ class ServerFoundationIntegrationTest {
     @Autowired
     private TransactionTemplate transactionTemplate;
     @Autowired
+    private ConventionFixtureService conventionService;
+    @Autowired
     private TestRestTemplate restTemplate;
     @LocalServerPort
     private int port;
@@ -53,7 +61,17 @@ class ServerFoundationIntegrationTest {
     @BeforeEach
     void createTestOnlyFixture() {
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS f1a_test_fixture (id UUID PRIMARY KEY, value TEXT NOT NULL)");
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS abu.f1b_convention_fixture (
+                    id UUID PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    version BIGINT NOT NULL DEFAULT 0
+                )
+                """);
         jdbcTemplate.execute("TRUNCATE TABLE f1a_test_fixture");
+        jdbcTemplate.execute("TRUNCATE TABLE abu.f1b_convention_fixture");
     }
 
     @Test
@@ -82,5 +100,56 @@ class ServerFoundationIntegrationTest {
         });
 
         assertThat(mapper.exists(id)).isFalse();
+    }
+
+    @Test
+    void serviceOwnedTransactionCommitsWithCommonAuditFields() {
+        UUID id = UUID.randomUUID();
+
+        ConventionFixtureRecord record = conventionService.create(id, "created");
+        ConventionFixtureRecord committed = conventionService.find(id);
+
+        assertThat(record).isEqualTo(committed);
+        assertThat(committed.id()).isEqualTo(id);
+        assertThat(committed.createdAt()).isNotNull();
+        assertThat(committed.updatedAt()).isNotNull();
+        assertThat(committed.version()).isZero();
+    }
+
+    @Test
+    void serviceExceptionRollsBackEveryMapperWrite() {
+        UUID id = UUID.randomUUID();
+        conventionService.create(id, "before");
+
+        assertThatThrownBy(() -> conventionService.updateThenFail(id, "should-roll-back", 0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("test-only rollback trigger");
+
+        ConventionFixtureRecord record = conventionService.find(id);
+        assertThat(record.value()).isEqualTo("before");
+        assertThat(record.version()).isZero();
+    }
+
+    @Test
+    void optimisticUpdateIncrementsVersionAndRejectsStaleVersion() {
+        UUID id = UUID.randomUUID();
+        conventionService.create(id, "v0");
+
+        ConventionFixtureRecord updated = conventionService.update(id, "v1", 0);
+
+        assertThat(updated.value()).isEqualTo("v1");
+        assertThat(updated.version()).isEqualTo(1);
+        assertThat(updated.updatedAt()).isAfterOrEqualTo(updated.createdAt());
+        assertThatThrownBy(() -> conventionService.update(id, "stale", 0))
+                .isInstanceOf(StaleVersionException.class);
+        assertThat(conventionService.find(id)).isEqualTo(updated);
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class ConventionTestConfiguration {
+        @Bean
+        ConventionFixtureService conventionFixtureService(ConventionFixtureMapper mapper) {
+            return new ConventionFixtureService(mapper);
+        }
     }
 }

@@ -1,0 +1,60 @@
+{
+  "contractVersion": "v1",
+  "basePath": "/api/v1",
+  "contentType": "application/json",
+  "encoding": "UTF-8",
+  "successResponses": {
+    "single": "typed-resource",
+    "list": "items-envelope",
+    "page": {
+      "fields": ["items", "page", "size", "total"],
+      "defaultPage": 1,
+      "defaultSize": 50,
+      "maximumSize": 200
+    }
+  },
+  "errorResponse": {
+    "fields": ["code", "message", "fieldErrors", "traceId"],
+    "fieldErrorFields": ["field", "code", "message"],
+    "codeFormat": "UPPER_SNAKE_CASE"
+  },
+  "httpStatuses": {
+    "readUpdateCommand": 200,
+    "created": 201,
+    "deleted": 204,
+    "malformed": 400,
+    "notFound": 404,
+    "conflict": 409,
+    "validation": 422,
+    "backendUnavailable": 503,
+    "unexpected": 500
+  },
+  "patch": {
+    "representation": "PatchField<T>",
+    "states": ["absent", "explicit-null", "value"]
+  },
+  "sort": {
+    "syntax": "field,direction",
+    "directions": ["asc", "desc"],
+    "fieldPolicy": "feature-whitelist"
+  },
+  "filter": {
+    "searchParameter": "q",
+    "differentDimensions": "AND",
+    "sameDimensionMultipleValues": "feature-defined"
+  },
+  "concurrency": {
+    "field": "version",
+    "type": "BIGINT",
+    "staleCode": "STALE_VERSION",
+    "staleStatus": 409
+  },
+  "database": {
+    "schema": "abu",
+    "tableNaming": "singular_snake_case",
+    "columnNaming": "snake_case",
+    "mutableFields": ["id", "created_at", "updated_at", "version"],
+    "globalSoftDelete": false
+  },
+  "openApi": "deferred"
+}
