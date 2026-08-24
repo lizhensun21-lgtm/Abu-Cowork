@@ -7,6 +7,234 @@ All notable changes to Abu are documented here. Format based on [Keep a Changelo
 > [`CHANGELOG.zh-CN.md`](./CHANGELOG.zh-CN.md); keep both in sync per release (see
 > `RELEASING.md`). Entries before v0.31.0 predate this split and remain bilingual.
 
+## v0.41.0 · 2026-08-22
+
+### ✨ Features
+
+- **Images now reach DeepSeek's vision models** — The adapter never declared DeepSeek's vision route, so an attached picture was silently swapped for a text placeholder. Vision-capable DeepSeek models now receive the actual image.
+- **One oversized picture can no longer wedge a session** — Every provider route now budgets attached-image size and count at admission. Formats no route accepts are re-encoded even when their pixel dimensions are fine — previously a small `.bmp` walked straight through, entered durable history, and 400'ed every later request in the conversation. The downscale notice also survives retries, so a retried turn asking about coordinates or fine print no longer reads a shrunken screenshot believing it is full size.
+- **Enter is now your choice** — Pick whether Enter sends or starts a new line. IME composition is double-guarded, so confirming a Chinese/Japanese candidate never fires a send, and Alt+Enter no longer reorders what you typed.
+- **Browser tools drive enterprise admin forms directly** — Readonly comboboxes and antd-style custom dropdowns are now first-class: snapshots see them and click/select/fill operate them, instead of degrading to page scripts. Waiting for an element to disappear returns in milliseconds instead of burning the full 30-second timeout (a ref that stops resolving *is* the disappearance), and a popup hidden via `visibility:hidden` is no longer treated as live — the agent can no longer pick an option from a closed dropdown.
+- **Jump around a long conversation by chapter** — A slim rail beside the transcript draws one tick per turn: the current chapter highlights as you scroll, hovering shows that chapter's title and first reply, and clicking jumps there with the familiar flash. Chapters are derived purely from the messages you already have, so every historical conversation gets the rail immediately with no migration; under 640px the rail yields to a History button in the header.
+- **Conversation rows grew a "…" menu** — Hovering a conversation in the sidebar now reveals a more-actions trigger instead of a bare red delete button; rename, export, move and delete live in one menu (right-click unchanged, delete keeps its 5-second undo).
+- **Model fetching without surprises** — Fetched model lists arrive unchecked instead of pre-selecting everything, built-in providers can fetch too, and the curated lists are refreshed to the current model generation. Fetch failures now tell the truth: a rejected key (401/403) is no longer shown as "this provider cannot list models" — errors are typed and carry the HTTP status — and Volcengine's fetch button appears only on plan tiers that actually support listing.
+- **Windows workspace header reworked; macOS app name localizes** — The workspace header lays out properly on Windows, and on Chinese macOS locales the app now displays its Chinese name instead of the romanized one.
+
+### 🐛 Fixes
+
+- **The context meter told the truth about a compacted conversation** — A long conversation could read "108% used · 138.4k / 128.0k tokens" while the request being sent fit the window comfortably. The indicator was re-counting the full raw history kept for the UI, which silently undid every reduction the send path had applied. It now builds on the agent loop's own post-compression measurement and estimates only the reply still streaming. Displayed percentages are also clamped, since a reading above 100% is always a measurement artifact.
+- **Image turns persist their state reliably** — Sending a picture left the turn's durable state stuck at "pending": a shallow copy of an immer draft leaked into the persistence queue, every revision for an image-carrying row failed silently, and the composer then quietly restored the just-sent draft. The leak is fixed; loading and importing now infer completion for rows whose reply demonstrably finished (so upgraded users don't see false "send failed" labels on old image turns); and retry/edit/regenerate carry the image's snapshot path, so a retried image is never re-sent empty. Pasting a copied `.bmp` also becomes a real image now, matching drag-drop.
+- **Overlay dialogs are clickable again over window drag lanes** — `-webkit-app-region` is an OS-level geometry union that ignores z-index, so a dialog overlapping a drag lane had its buttons silently swallowed; ~30 dialogs now opt out explicitly and a source-scan test guards new ones. macOS header rows drag the window again.
+- **Copying an image inside the app pastes an image again** — not a useless file badge.
+- **Two agent-loop teardown races closed** — A follow-up can no longer be staged into a run that already ended, and a run's late cleanup can no longer delete the next turn's crash-recovery checkpoint (the in-process path now uses the same loop-guarded clear as the sidecar path).
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.40.0...v0.41.0
+
+## v0.40.0 · 2026-08-20
+
+### ✨ Features
+
+- **Longer conversations cost less and start answering sooner** — The system prompt is now stable across turns: the clock is day-granularity (ask the model to run `date` when it needs the exact time), and per-turn state (todos, recalled memories) rides after the conversation instead of inside the prompt. Together with a message-history cache breakpoint, a long session stops re-billing its whole history on every request. Read-only `run_command` batches (greps, listings, file reads) now run concurrently instead of one after another, and `edit_file` tolerates whitespace drift in the quoted original rather than costing a full retry round-trip.
+- **Memory recall works for Chinese** — The relevance tokenizer only split on whitespace, so a whitespace-free Chinese query was a single token that matched nothing and recall was effectively dead. Chinese queries are now tokenized into character bigrams, weighted below word matches and gated so a single shared pair cannot pull in an unrelated memory.
+- **Blocking a site is now one click** — v0.39.0 shipped per-site verdicts but no way to record "no": the only way to stop being asked about a site was to approve it. The confirmation dialog now offers "block this site", and Settings › Capabilities lets an already-allowed site be switched to blocked.
+- **Scheduled tasks carry their own permission mode** — A task can run at a different trust level than your interactive chat, and always-ask actions no longer offer a permanent grant.
+- **New `capability_snapshot` tool** — A read-only report of what the current run can actually do.
+
+### 🔒 Security
+
+- **`read_tools` is now an enforced ceiling, not a request** — The unattended read-only tier promised "reads information, changes nothing" but rested on a confirmation callback that a workspace-internal `safe` command never reached, so `touch`, `mkdir`, `cp`, `node` and `npm install` all ran. The tier is now a positive allowlist enforced on the tool roster, at dispatch, and at the sidecar boundary. Any tool not classified — including MCP tools — is denied.
+- **Delegation no longer escapes the tier** — An `@agent` message and `delegate_to_agent`/`run_agent_batch` forwarded neither the run's allowlist nor its blocklist, so a single message on a read-only channel could spawn a subagent with no ceiling at all. All three delegation entry points now pass both restrictions, and subagents enforce them.
+- **The Computer Use safety budget actually holds** — The 30-step / 5-minute cap was enforced only in the renderer and reset at the top of every batch, so a multi-batch task never reached either limit. The budget now rides the main-process task lease and its deadline is fixed the first time it is taken.
+- **Crash reports carry the shape of an error, not its contents** — Automatic error reports normalize paths, URLs, emails, CJK runs and quoted spans out of the message before it leaves the machine. Raw messages stay local, in the runtime log and in a user-initiated diagnostic bundle.
+- Credential-shaped content is redacted at the memory write funnel, and raw MCP connection errors are sanitized before reaching the model.
+
+### 🐛 Fixes
+
+- **Stopping a stream no longer loses the partial reply** — The stop revision was written outside the conversation's serial persistence queue, so under load it could overtake the assistant row's own append, find no row to revise, and be silently dropped. The visible partial answer then disappeared on the next load, with no error anywhere on the path.
+- Message history is now an append-only ledger: a crash mid-write can no longer truncate a conversation, and a stale crash-leftover snapshot can no longer overwrite a finished reply or resurrect a removed one.
+- Main-process and renderer crashes are recorded locally, and a sidecar crash loop is reported instead of failing quietly.
+- Computer Use stop now targets the session that owns the run rather than whichever conversation is on screen, and structured-mode `get_app_state` resolves the frontmost app correctly.
+- The thinking block's placeholder → thinking → done transitions are steadier: the block now animates open and rolls up instead of remounting, the status line keeps one size and position throughout, and the streaming answer pane no longer jitters from the manual bottom-stick. Some residual movement during these transitions is still under investigation and is not fully resolved in this release.
+- `delegate_to_agent` is scheduled as concurrency-safe again, so fan-out is not serialized.
+
+### ⚠️ Behavior change
+
+- **Deleting a single message has been replaced by redoing a turn.** None of the comparable tools ship per-message delete; all answer "redo this turn" with a rewind, and a rewind is what the durable message ledger can guarantee. Redoing a turn that is not the last one now asks first and tells you how many later turns it discards.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.39.0...v0.40.0
+
+## v0.39.0 · 2026-08-18
+
+### ✨ Features
+
+- **Per-site browser authorization** — The browser action confirmation now offers "Always allow this site" next to "Just this once". Verdicts are stored per exact origin (denied > allowed > ask), visible and revocable under Settings › Capabilities, and apply to both the built-in browser and the connected Chrome bridge. Page scripting (`execute_js`) never gets a permanent grant — each run asks separately. Scheduled tasks can now act on sites you pre-authorized; everything else stays fail-closed when nobody is present.
+- **Approval gates for high-consequence actions** — State-changing browser automation (click, fill, navigate, scripting) asks before acting inside your logged-in sessions, in every permission mode. Self-extension (creating a subagent, installing an MCP server, rewriting the persona) requires an explicit per-act confirmation.
+- **Telemetry opt-out** — Anonymous usage/error reporting can be turned off in Settings › Diagnostics.
+
+### 🐛 Fixes
+
+- The close-window dialog is no longer painted over by the browser pane — quitting the app with a browser tab open works again; while any modal is up, the pane shows a frozen snapshot of the page instead of flashing to blank white.
+- Browser toolbar tooltips are no longer clipped by the native webview.
+- The terminal pane follows the app theme (no more fixed dark palette on light theme).
+- Failed runs no longer render the same error twice; the insufficient-balance message now says what to do.
+- The user's input is no longer silently dropped when a run is rejected (no API key, dispatch failure, denied confirmation, aborted precompute) — it is restored to the input box.
+- Tool-call intent is persisted before tools run, so a crash mid-batch can no longer be misread as "nothing executed".
+- Runtime trace events now carry the conversation id across renderer, sidecar, and host planes.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.38.1...v0.39.0
+
+## v0.38.1 · 2026-08-16
+
+**Root cause**: The one-time Tauri→Electron localStorage migration validated its completion sentinel against a fingerprint of the legacy database's file metadata — but merely reading that database mutates its sidecar files (SQLite WAL `-shm` on macOS, LevelDB LOCK/LOG on Windows), so the sentinel never stayed valid and the migration re-imported the stale legacy snapshot on every launch, overwriting 13 renderer stores (deleted providers resurrected after restart). Separately, a broken OS keychain surfaced only as individual API-key failures with no way to see the real cause.
+
+**Fixes**:
+
+- A completed migration is now permanent; legacy-source drift is logged, never silently re-applied (macOS and Windows).
+- Re-entering an API key clears the "could not be decrypted" banner immediately; a failed encrypted save now shows a warning on the provider card instead of failing silently (the key keeps working via the local fallback).
+- New "Encrypted key storage" diagnostics row runs a real write→read→delete probe and counts undecryptable keys, so a broken system keychain is visible at a glance; the decrypt-failure message now names the encryption-key mismatch instead of guessing a hardware change.
+- Image generation: a Volcengine chat-endpoint misconfiguration now returns an actionable hint (correct image endpoint + doubao-seedream models) in tool errors and an inline settings warning; orphaned `imagegen:*` secrets left by historical migration re-runs are swept at startup (macOS).
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.38.0...v0.38.1
+
+## v0.38.0 · 2026-08-14
+
+### Features
+
+- **Reliable Computer Use loop** — Desktop control now follows an enforced Observe → Act → Verify cycle. Every writable action consumes a short-lived, single-use observation state bound to the target app and process, then requires a fresh observation before another action.
+- **Guided permissions and recovery** — Abu requests only the macOS permissions required by the current task, explains when a relaunch is needed, and can return to the original conversation without reusing an old authorization or accessibility session.
+- **Clear model capability modes** — Models are shown as full, structured, unsupported, or unknown. Tool-capable models without image input, including supported DeepSeek configurations, can use structured accessibility data without being presented as visually capable.
+
+### Reliability and Safety
+
+- Consequential actions are classified again by the Electron host and require a one-attempt confirmation; an ambiguous native result stops the task instead of retrying a possible side effect.
+- Stale observations, target-process changes, helper restarts, renderer reloads, and duplicate writes fail closed. Windows desktop control also serializes writes across approval and native-input paths.
+- Repeated no-change observations allow one bounded recovery attempt, then stop with an explicit result rather than looping indefinitely.
+
+### Diagnostics
+
+- The capability page and task status now show the active target, capability mode, permission state, and Observe/Act/Verify phase.
+- Local runtime traces correlate the conversation, loop, tool call, observation state, helper generation, and verification result through an allowlist that excludes prompts, screenshots, accessibility labels, user input, and tool-result bodies.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.37.4...v0.38.0
+
+## v0.37.4 · 2026-08-14
+
+**Root cause**: A stopped turn and its queued follow-ups were reconciled through overlapping renderer and sidecar lifecycle paths. That allowed a queued message to start before the active reply had settled, disappear during state replacement, or leave an empty assistant row after Stop.
+
+**Fix**:
+
+- Queued follow-ups now wait for the active turn to reach a durable terminal state, then start in order with the same visible thinking feedback as a normal message.
+- Queue entries stay visible and recoverable until their own run takes ownership, preventing a follow-up from disappearing or being attached to the previous answer.
+- Stopping a turn now preserves an explicit stopped result while removing only truly empty streaming placeholders; the redundant per-message running label is no longer shown.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.37.3...v0.37.4
+
+## v0.37.3 · 2026-08-13
+
+**Root cause**: Electron Builder 26 writes external updater blockmaps without a `blockMapSize` field. Release staging treated that missing field as permission to omit the blockmap, so the three architecture feeds could reference complete installers while their differential update metadata returned 404.
+
+**Fix**:
+
+- macOS Apple Silicon, macOS Intel, and Windows updater feeds now publish the external blockmap beside every referenced artifact, allowing supported upgrades to use differential downloads again.
+- Release staging fails before publication if any feed-referenced blockmap is missing, and still verifies its exact size whenever the feed provides one.
+- Full-installer fallback behavior is unchanged for clients that cannot apply a differential update.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.37.2...v0.37.3
+
+## v0.37.2 · 2026-08-13
+
+**Root cause**: On Windows, Credential Manager entries can outlive AppData. The transition startup kept retrying stale or unreadable credentials after the legacy Tauri profile had been removed, while completed migration markers did not preserve enough source evidence across later launches.
+
+**Fix**:
+
+- A clean reset or reinstall no longer loops on `windows-secret-migration-failed` when no live Tauri data remains.
+- Completed migration markers retain source inventory and trusted v2 provenance, so later launches make the same safe migration decision.
+- Real or ambiguous legacy data still fails closed; Abu never silently discards credentials that may still be recoverable.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.37.1...v0.37.2
+
+## v0.37.1 · 2026-08-13
+
+**Root cause**: Renderer lifecycle changes and sidecar reconnects could detach a task from its event stream, leaving the message stuck in a loading state even after the run had completed or failed.
+
+**Fix**:
+
+- Task events now use a dedicated, sequenced sidecar channel with status replay, so Abu can restore the existing run after a renderer reload or temporary disconnect instead of spinning indefinitely.
+- Terminal states are settled exactly once and stale sidecar generations are ignored, preventing duplicate tool side effects while reconnecting.
+- Connection failures now surface an explicit disconnected or reconnecting state rather than leaving the task on an ambiguous loading indicator.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.37.0...v0.37.1
+
+## v0.37.0 · 2026-08-12
+
+### Features
+
+- **Reliable task execution across process boundaries** — A turn is now written to disk before execution starts, receives a bounded start acknowledgement, and settles only after its completed, failed, or interrupted state is durable. If Electron or the sidecar disconnects, Abu queries the existing run and resumes observation instead of replaying tool work.
+- **Actionable diagnostic bundles** — Exports now recheck live health and include a scrubbed manifest plus a renderer-to-sidecar run timeline, making it possible to distinguish persistence, startup, first-response, cancellation, and provider failures without collecting prompts, replies, credentials, or local paths.
+- **Adaptive context budgeting** — Long conversations reserve space for system prompts, tools, images, and model output before sending, then compact progressively while keeping recent user intent and tool results available.
+
+### Fixes
+
+- **One task owner per conversation** — Rapid sends, image attachments, scheduled tasks, triggers, and IM messages can no longer start overlapping model streams in the same conversation; text follow-ups remain safely staged for an interactive task.
+- **Stop and crash recovery are durable** — Stop waits for queued frames and local persistence, removes empty streaming placeholders, preserves queued follow-ups, and recovers partial replies after app termination or sidecar replacement.
+- **Custom web search status is accurate** — The AI services page now reflects a configured custom search endpoint instead of reporting the capability as unavailable.
+- **Update notes follow the selected language** — Switching the interface language now refreshes the update dialog with the matching English or Chinese release notes instead of keeping the previous locale.
+
+### Platform-Specific
+
+- **Windows** — Python launcher commands such as `py -3` and `py -3.12` are parsed as interpreter selectors, so bundled and host Python execution no longer forwards an invalid selector to CPython.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.36.1...v0.37.0
+
+## v0.36.1 · 2026-08-12
+
+**Root cause**: When a conversation stopped sending, previous support bundles could not show which boundary stalled between the renderer, Electron main process, sidecar, and model request; version and update surfaces could also report stale release metadata.
+
+**Fix**:
+
+- Runtime diagnostics now correlate renderer, Electron main, and sidecar checkpoints with run and RPC identifiers, including sidecar readiness, first response, a 30-second no-response stall, bridge acknowledgement, cancellation, and failure stages.
+- Diagnostic exports automatically include the renderer trace, pending RPCs, and sidecar state. Fields are allowlisted and scrubbed so prompts, responses, credentials, and provider response bodies are not collected.
+- Diagnostics and update checks now use the live app version, actively verify update status, and display localized notes only when they match the exact release metadata.
+- Website download labels and bilingual release metadata now follow the latest published GitHub Release consistently.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.36.0...v0.36.1
+
+## v0.36.0 · 2026-08-09
+
+### ✨ Features
+
+- **Help opens the online documentation** — The Help entry in the account menu now opens the official website guide in your language (Chinese or English) instead of the older in-app guide, so the docs stay current without shipping a new app build.
+- **Unified capability center for personal and organization tools** — The toolbox brings personal and organization-provided capabilities into one place, with per-capability scope and clearer entitlement state for enterprise-managed setups.
+- **Managed Agent templates for organizations** — Enterprises can distribute managed Agent templates that appear alongside personal Agents and stay in sync through a defined extension contract.
+
+### 🐛 Fixes
+
+- **Enterprise capabilities fail closed** — Unlicensed local capabilities are retracted and entitlements are mirrored into the sidecar, so an organization member never sees a capability they are not entitled to.
+
+### Changed
+
+- **Enterprise client internals isolated behind the open-core boundary** — Gateway model integration, entitlement mirroring, and bind-flow surfaces were refactored so closed logic lives in the private module while the public repository keeps only the extension shape.
+
+### Docs
+
+- Installation and user guides now route through the website with refreshed terminology, and `AGENTS.md` became the single source of truth for repository conventions (`CLAUDE.md` is a thin `@import` shell).
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.35.0...v0.36.0
+
+## v0.35.0 · 2026-08-05
+
+### Added
+
+- **Preview file actions are easier to reach without crowding the header** — Reveal in folder, copy path, and save as now share one compact, keyboard-dismissable menu across supported file previews.
+- **Image and PDF reading controls are more complete** — Images can be zoomed, rotated, panned, and reset; PDF controls and selectable document content remain usable while moving between workspace tabs.
+- **Workspace context stays visible and tab state is preserved** — New unbound tasks keep the workspace chooser available, the browser-tab entry is restored, and switching between browser and preview tabs no longer discards the active preview state.
+
+### Security
+
+- **Electron build tooling uses patched HTTP dependencies** — The locked `undici` versions move to `7.29.0` and `6.28.0`, resolving the current High advisory and seven related advisories without changing application runtime behavior.
+
+**Full Changelog**: https://github.com/PM-Shawn/Abu-Cowork/compare/v0.34.2...v0.35.0
+
 ## v0.34.2 · 2026-08-04
 
 ### Added

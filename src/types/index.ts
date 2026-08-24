@@ -210,6 +210,12 @@ export interface ImageContent {
     data: string;
   };
   filePath?: string;  // Disk path for persistence — base64 data is stripped on persist, filePath survives
+  /** Set when composer admission downscaled this image to fit provider limits.
+   *  Metadata on the block, NOT a sibling text block: the note it produces is
+   *  for the model only, and a text block would render in the user's own chat
+   *  bubble. `messageNormalizer` turns this into the model-visible notice at
+   *  send time, the same place the non-vision note is produced. */
+  resized?: { fromWidth: number; fromHeight: number; toWidth: number; toHeight: number };
 }
 
 export interface DocumentContent {
@@ -228,6 +234,16 @@ export interface ImageAttachment {
   id: string;
   data: string;        // base64 data (no prefix)
   mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  /** Set when composer admission downscaled the image to fit provider limits.
+   *  Carried to the send path so the model can be told it is not looking at the
+   *  original resolution — otherwise it reads coordinates and fine print off a
+   *  shrunken picture believing it is full size. */
+  resized?: { fromWidth: number; fromHeight: number; toWidth: number; toHeight: number };
+  /** Disk snapshot under outputs/images/, set when the attachment is rebuilt
+   *  from a persisted image block (retry). After an app restart `data` is empty
+   *  (stripped on persist) — this path is the only way the send-path
+   *  rehydration and the thumbnail can recover the pixels. */
+  filePath?: string;
 }
 
 // Thinking block for extended thinking
@@ -245,6 +261,19 @@ export interface Message {
   isStreaming?: boolean;
   /** Persisted terminal reason for an assistant turn that the user stopped. */
   stopReason?: 'user';
+  /**
+   * Durable shell-owned lifecycle for a user message dispatched to the
+   * sidecar. The message is appended before any asynchronous preparation so
+   * it can never disappear when the sidecar handshake stalls or fails.
+   */
+  runState?: 'pending' | 'accepted' | 'running' | 'recovering' | 'completed' | 'failed' | 'connection-failed' | 'interrupted';
+  /** Persisted wall-clock terminal time for reliable-run status and duration UI. */
+  runEndedAt?: number;
+  /** Stable correlation ids for Reliable Run Protocol V1. */
+  runId?: string;
+  clientMessageId?: string;
+  /** User-facing detail retained when dispatch reaches a failed terminal. */
+  runError?: string;
   toolCalls?: ToolCall[];
   // Extended thinking content
   thinking?: string;
@@ -350,18 +379,20 @@ export interface Conversation {
   projectId?: string;  // If set, this conversation belongs to a project
   contextCache?: ContextCache;  // Ephemeral compression cache (not persisted)
   // Ephemeral context usage state — NOT persisted (excluded by JSONL writer + chatStore partialize).
-  // Published by agentLoop each turn from post-compression tokens. ContextIndicator
-  // derives the live water-level from this baseline + estimateMessageTokens(messages),
-  // so streaming output and post-restart history view both stay accurate without
-  // waiting for the next agent-loop iteration.
+  // Published by agentLoop each turn from POST-compression tokens: the size of the
+  // payload actually sent, not of the raw history kept for the UI. This is the single
+  // source of truth for the water level — ContextIndicator only adds an incremental
+  // estimate for messages appended AFTER `messageCountAtPublish`, so streaming output
+  // stays live without re-counting (and thus un-compressing) the whole conversation.
   contextUsage?: {
-    percent: number;      // 0–100+; round(tokensUsed / contextWindow * 100)
-    tokensUsed: number;   // post-compression input tokens (system + tools + messages snapshot)
+    percent: number;      // 0–100, clamped; round(tokensUsed / contextWindow * 100)
+    tokensUsed: number;   // post-compression input tokens (system + tools + compressed message payload)
     tokensMax: number;    // contextWindow (NOT contextWindow - reservedOutput — users expect the published model window)
-    // System prompt + tool schema overhead. Stored so the indicator can compute
-    // live = overhead + estimateMessageTokens(messagesNow) without a second
-    // agent-loop pass. Empirically ~7-8k for Abu; absent on first-open (use fallback).
-    overhead?: number;
+    // How many of the conversation's messages `tokensUsed` accounts for. The
+    // indicator estimates only `messages.slice(messageCountAtPublish)` on top,
+    // which is what keeps a compacted conversation from being double-counted.
+    // Absent only on a payload from an older publish — treated as "no tail".
+    messageCountAtPublish?: number;
   };
   isCompressing?: boolean;  // True while compressContextIfNeeded is awaiting LLM
   /**
@@ -446,6 +477,22 @@ export interface ToolExecutionContext {
    * providers. Undefined means "unknown / assume capable" (default behavior).
    */
   supportsVision?: boolean;
+  /** Host-resolved Computer Use compatibility for the active model. */
+  computerUseTier?: import('../core/llm/modelCapabilities').ComputerUseModelTier;
+  /** Provenance for the Computer Use compatibility decision. */
+  modelCapabilitySource?: import('../core/llm/modelCapabilities').ModelCapabilitySource;
+  /** Model id used for diagnostics only; never a credential or provider payload. */
+  modelId?: string;
+  /** SHA-256 correlation for permission relaunch recovery. Raw task text is not
+   * copied into the recovery token. */
+  taskSummaryHash?: string;
+  /**
+   * Names of tools whose schemas were deliberately deferred for this turn.
+   * This is selected by the trusted agent runtime only (never from model
+   * input) and is wire-safe so a sidecar-hosted loop can ask the shell-side
+   * registry for schemas without relying on cross-process module state.
+   */
+  deferredToolNames?: string[];
   /**
    * In-process cancellation signal. This is intentionally local-only: it must
    * never be relied on across JSON/RPC serialization, where AbortSignal would
@@ -622,6 +669,20 @@ export interface Skill extends SkillMetadata {
  *  — declared inline here to avoid pulling the i18n module into core agent code. */
 type AgentLocale = 'zh-CN' | 'en-US';
 
+/** Metadata attached to definitions supplied by a runtime extension. The host
+ * keeps this contract generic; enterprise catalog transport and policy stay in
+ * the closed-source module. */
+export interface ManagedAgentMetadata {
+  source: string;
+  id: string;
+  version: string;
+  readOnly: true;
+  ready: boolean;
+  unavailableReason?: string;
+  requiredSkills?: string[];
+  requiredMcpServers?: string[];
+}
+
 export interface SubagentMetadata {
   /** Canonical name — primary key in agentRegistry, also the `@mention` token. */
   name: string;
@@ -635,6 +696,7 @@ export interface SubagentMetadata {
   skills?: string[];
   memory?: 'session' | 'project' | 'user';
   background?: boolean;
+  managed?: ManagedAgentMetadata;
 
   // ── Display-only fields (rendered by toolbox AgentsSection / chat welcome banner)
   //   All optional. User-defined agents can fill any subset; builtins ship full data.

@@ -10,21 +10,25 @@ import { useFileDragDrop } from '@/hooks/useFileDragDrop';
 import { uint8ArrayToBase64 } from '@/utils/base64';
 import { getBaseName, IMAGE_MIME_MAP } from '@/utils/pathUtils';
 import { isImageFile } from '@/components/chat/FileAttachment';
+import { isImeComposing, insertNewlineAtCursor, resolveEnterAction } from '@/components/chat/composerKeys';
+import { isMacOS } from '@/utils/platform';
 import { enqueueUserInput } from '@/core/agent/userInputQueue';
 import { useChatStore, useActiveConversation } from '@/stores/chatStore';
 import ContextIndicator from '@/components/chat/ContextIndicator';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useEnterpriseStore } from '@/stores/enterpriseStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { usePermissionStore } from '@/stores/permissionStore';
-import { useEnterpriseStore } from '@/stores/enterpriseStore';
 import type { PermissionDuration } from '@/stores/permissionStore';
 import { useI18n, format } from '@/i18n';
 import { useToastStore } from '@/stores/toastStore';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { ImageAttachment } from '@/types';
-import { generateAttachmentId, readFileAsBase64, SUPPORTED_IMAGE_TYPES } from '@/utils/imageUtils';
+import { generateAttachmentId, SUPPORTED_IMAGE_TYPES, sniffImageMediaType, IMAGE_MAGIC_PREFIX_BYTES } from '@/utils/imageUtils';
+import { fitImageToDimension } from '@/utils/imageCompress';
+import { admissionMaxDimension } from '@/core/llm/imagePolicy';
 import PermissionDialog from '@/components/common/PermissionDialog';
 import FolderSelector from '@/components/common/FolderSelector';
 import PromoteToProjectHint from '@/components/chat/PromoteToProjectHint';
@@ -72,9 +76,29 @@ export function referenceChipLabel(r: ChatReference): string {
   return r.kind === 'dom-element' ? r.source.name : r.selection.text;
 }
 
+/** The workspace picker belongs to the pre-task context, not the send toolbar.
+ * Keep it visible while an unbound draft has a temporary folder selection so
+ * the user can verify or change that choice before the first send. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function shouldShowWorkspaceContextBar(
+  variant: ChatInputProps['variant'],
+  boundWorkspacePath: string | null | undefined,
+): boolean {
+  return variant === 'welcome' && !boundWorkspacePath;
+}
+
 interface ChatInputProps {
   variant: 'welcome' | 'chat';
-  onSend: (message: string, images?: ImageAttachment[], workspacePath?: string | null) => void;
+  /**
+   * Deliver the composed message. Resolving to `false` means the send was not
+   * accepted (no API key, conversation busy) and the composer restores the
+   * draft it optimistically cleared.
+   */
+  onSend: (
+    message: string,
+    images?: ImageAttachment[],
+    workspacePath?: string | null,
+  ) => void | Promise<boolean | void>;
   disabled?: boolean;
   /** Custom placeholder from scenario guide (welcome variant only) */
   scenarioPlaceholder?: string | null;
@@ -94,13 +118,64 @@ interface FileAttachmentItem {
   name: string;
 }
 
+/**
+ * The single admission gate for composer images.
+ *
+ * Providers reject an image whose longest side exceeds their limit, and the
+ * rejected image is already in durable history by then — every later request in
+ * that session fails too, including text-only ones. Downscaling here keeps the
+ * picture usable instead of letting one oversized screenshot kill the thread.
+ *
+ * `resized` rides along so the send path can tell the model the image it is
+ * looking at is not at original scale (see `buildUserMessageContent`).
+ */
+async function admitImage(
+  bytes: Uint8Array,
+  mediaType: ImageAttachment['mediaType'],
+): Promise<ImageAttachment> {
+  const fitted = await fitImageToDimension({ bytes, mediaType }, admissionMaxDimension());
+  return {
+    id: generateAttachmentId(),
+    data: uint8ArrayToBase64(fitted.bytes),
+    mediaType: fitted.mediaType as ImageAttachment['mediaType'],
+    ...(fitted.resized ? { resized: fitted.resized } : {}),
+  };
+}
+
+/**
+ * Admit a pasted file as an image when its BYTES say it is one.
+ *
+ * Returns null for anything that is not a sendable image, so the caller can
+ * keep treating it as a plain file. Only the leading bytes are read for the
+ * check — a 200MB video must not be pulled into memory just to be rejected.
+ *
+ * The declared `type` is still honoured as a fallback: it is the only signal
+ * for a source that hands over correctly-labelled bytes we have no signature
+ * for, and trusting it here keeps every case that worked before working.
+ */
+async function admitPastedImage(file: File): Promise<ImageAttachment | null> {
+  // A pasted directory also arrives as a `File`, and reading it throws. Any
+  // read failure just means "not an image we can show" — it must never take
+  // the whole paste down with it, since the path branch can still badge it.
+  try {
+    if (file.size === 0) return null;
+    const head = new Uint8Array(await file.slice(0, IMAGE_MAGIC_PREFIX_BYTES).arrayBuffer());
+    const sniffed = sniffImageMediaType(head);
+    const declared = SUPPORTED_IMAGE_TYPES.includes(file.type) ? file.type : null;
+    const mediaType = sniffed ?? declared;
+    if (!mediaType) return null;
+    return await admitImage(new Uint8Array(await file.arrayBuffer()), mediaType as ImageAttachment['mediaType']);
+  } catch {
+    return null;
+  }
+}
+
 /** Read a local image file path into an ImageAttachment via Tauri fs */
 async function readLocalImage(filePath: string): Promise<ImageAttachment> {
   const bytes = await readFile(filePath);
-  const base64 = uint8ArrayToBase64(bytes);
   const ext = filePath.toLowerCase().split('.').pop() ?? '';
   const mediaType = (IMAGE_MIME_MAP[ext] ?? 'image/jpeg') as ImageAttachment['mediaType'];
-  return { id: generateAttachmentId(), data: base64, mediaType };
+  return admitImage(bytes, mediaType);
 }
 
 /** Process file paths: read images as base64, collect non-image paths as file badges */
@@ -197,10 +272,12 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
   const clearPendingAttachments = useChatStore((s) => s.clearPendingAttachments);
   const skills = useDiscoveryStore((s) => s.skills);
   const agents = useDiscoveryStore((s) => s.agents);
+  const enterBehavior = useSettingsStore((s) => s.composerEnterBehavior);
   const disabledSkills = useSettingsStore((s) => s.disabledSkills);
   const disabledAgents = useSettingsStore((s) => s.disabledAgents);
   const globalActiveModel = useSettingsStore((s) => s.activeModel);
   const providers = useSettingsStore((s) => s.providers);
+  const isEnterprise = useEnterpriseStore((s) => s.mode.kind !== 'personal');
   // The model shown/edited here is the active conversation's pinned model when it
   // has one, else the global selection — keeps the picker label in sync with what
   // this specific conversation actually runs on (see per-conversation model pin).
@@ -215,12 +292,15 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
   // Chat-only derived state
   const isRunning = activeConv?.status === 'running';
   const isStreaming = !isWelcome && isRunning;
-  const hasActiveProvider = !!effProvider && effProvider.enabled;
+  const isEnterpriseGatewayModel = isEnterprise && effModel.providerId === 'enterprise-gateway' && currentModel.length > 0;
+  const hasActiveProvider = isEnterpriseGatewayModel || (!!effProvider && effProvider.enabled);
   const availableModels = effProvider?.models ?? [];
   const activeModelInfo = availableModels.find((m) => m.id === currentModel);
   const modelDisplay = !hasActiveProvider
     ? t.chat.noModelConfigured
-    : (activeModelInfo?.label ?? (currentModel ? currentModel.split('/').pop()?.split('-').slice(0, 2).join(' ') : 'Claude'));
+    : isEnterpriseGatewayModel
+      ? currentModel
+      : (activeModelInfo?.label ?? (currentModel ? currentModel.split('/').pop()?.split('-').slice(0, 2).join(' ') : 'Claude'));
   const [showModelPicker, setShowModelPicker] = useState(false);
   const modelPickerRef = useRef<HTMLDivElement>(null);
 
@@ -270,37 +350,59 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
 
     // Pre-extract File objects synchronously before the first await.
     // getAsFile() returns null on any DataTransferItem touched after an await.
-    const bitmapFiles: File[] = Array.from(items)
-      .filter((it) => SUPPORTED_IMAGE_TYPES.includes(it.type))
+    //
+    // EVERY file item is captured, not just ones already labelled with a
+    // supported image type: when an app copies an image, macOS puts a
+    // pasteboard temp item on the clipboard whose name carries no usable
+    // extension (`…/id=6571367.107158211`), and Chromium hands that to the
+    // renderer as a File with an EMPTY `type`. Filtering on `type` here threw
+    // the real image bytes away before anything could look at them.
+    const pastedFiles: File[] = Array.from(items)
+      .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
       .filter((f): f is File => f !== null);
 
-    // (a) Try OS pasteboard for real file paths — full parity with drag-drop.
+    // (a) The bytes the event handed us decide what is an image — names and
+    // mime labels both lie for pasteboard temp items. This also pins down the
+    // media type exactly, instead of guessing it from a file extension.
+    const admitted: ImageAttachment[] = [];
+    const admittedNames = new Set<string>();
+    const nonImageFiles: File[] = [];
+    for (const file of pastedFiles) {
+      const image = await admitPastedImage(file);
+      if (image) {
+        admitted.push(image);
+        admittedNames.add(file.name);
+      } else {
+        nonImageFiles.push(file);
+      }
+    }
+    if (admitted.length > 0) setImages((prev) => [...prev, ...admitted]);
+
+    // (b) Whatever was NOT an image still wants its real absolute path so the
+    // badge can open/reference the actual file — that is what the OS pasteboard
+    // lookup is for, and it keeps full parity with drag-drop.
+    if (nonImageFiles.length === 0) return;
+
     let paths: string[] = [];
     try {
       paths = await invoke<string[]>('read_clipboard_file_paths');
     } catch {
-      // Native command unavailable or failed — fall through to bitmap branch.
+      // Native command unavailable or failed — nothing more we can do here.
     }
+    // An image already admitted from its bytes must not come back as a badge.
+    const badgePaths = paths.filter((p) => !admittedNames.has(getBaseName(p)));
+    if (badgePaths.length === 0) return;
 
-    if (paths.length > 0) {
-      await processFilePaths(
-        paths,
-        (imgs) => setImages((prev) => [...prev, ...imgs]),
-        (newFiles) => setFiles((prev) => {
-          const existing = new Set(prev.map((f) => f.path));
-          const deduped = newFiles.filter((f) => !existing.has(f.path));
-          return deduped.length > 0 ? [...prev, ...deduped] : prev;
-        }),
-      );
-      return;
-    }
-
-    // (b) Bitmap-only fallback (screenshots etc.) — use pre-captured File objects.
-    for (const file of bitmapFiles) {
-      const { data, mediaType } = await readFileAsBase64(file);
-      setImages((prev) => [...prev, { id: generateAttachmentId(), data, mediaType }]);
-    }
+    await processFilePaths(
+      badgePaths,
+      (imgs) => setImages((prev) => [...prev, ...imgs]),
+      (newFiles) => setFiles((prev) => {
+        const existing = new Set(prev.map((f) => f.path));
+        const deduped = newFiles.filter((f) => !existing.has(f.path));
+        return deduped.length > 0 ? [...prev, ...deduped] : prev;
+      }),
+    );
   }, []);
 
   const removeImage = useCallback((id: string) => {
@@ -329,11 +431,13 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
   // would then have no workspace, no project lookup, no auto-associate.
   const activeConvWorkspace = activeConv?.workspacePath ?? null;
   const globalWorkspace = useWorkspaceStore((s) => s.currentPath);
+  const boundWorkspacePath = activeConvWorkspace ?? globalWorkspace;
+  const showWorkspaceContextBar = shouldShowWorkspaceContextBar(variant, boundWorkspacePath);
   useEffect(() => {
     if (!isWelcome) return;
-    const next = activeConvWorkspace ?? globalWorkspace;
+    const next = boundWorkspacePath;
     setLocalWorkspace(next);
-  }, [activeConvId, activeConvWorkspace, globalWorkspace, isWelcome]);
+  }, [activeConvId, boundWorkspacePath, isWelcome]);
 
   useEffect(() => {
     const previousKey = prevDraftKeyRef.current;
@@ -648,6 +752,31 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
+  /**
+   * Put a cleared draft back after a send that was not accepted.
+   *
+   * The composer clears optimistically so typing stays responsive, but the
+   * dispatch result only arrives later — without this, a rejected send (no API
+   * key configured, conversation busy) left the user staring at an empty box
+   * with their text gone.
+   */
+  const restoreInput = (draft: ComposerDraft, sentDraftKey: string) => {
+    // The rejection arrives asynchronously, so the user may have switched
+    // conversations in the meantime. Putting the text back on screen then would
+    // show conversation A's message inside conversation B. Persist it under the
+    // key it was typed for and leave the visible composer alone.
+    writeComposerDraft(sentDraftKey, draft);
+    if (sentDraftKey !== draftKey) return;
+    currentDraftRef.current = draft;
+    setText(draft.text);
+    setImages(draft.images);
+    setFiles(draft.files);
+    setReferences(draft.references);
+    setSelectedSkill(draft.selectedSkill);
+    setSelectedAgent(draft.selectedAgent);
+    textareaRef.current?.focus();
+  };
+
   const handleSend = () => {
     const trimmed = text.trim();
     if ((!trimmed && !selectedSkill && !selectedAgent && images.length === 0 && files.length === 0 && references.length === 0) || disabled) return;
@@ -674,14 +803,43 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
     // Mid-task input: if agent is running, stage the message in the queue
     // strip above the composer (cancellable) instead of starting a new loop.
     // It becomes a transcript bubble only when the loop drains it.
+    if (isRunning && images.length > 0) {
+      useToastStore.getState().addToast({
+        type: 'warning',
+        title: t.chat.attachmentDuringRun,
+      });
+      return;
+    }
     if (isRunning && activeConv?.id && message) {
       enqueueUserInput(activeConv.id, message);
       resetInput();
       return;
     }
 
-    onSend(message, images.length > 0 ? images : undefined, isWelcome ? localWorkspace : undefined);
+    // Snapshot before the optimistic clear so a rejected send can hand the
+    // draft back instead of losing it.
+    const sentDraft: ComposerDraft = {
+      text,
+      images: [...images],
+      files: [...files],
+      references: [...references],
+      selectedSkill,
+      selectedAgent,
+    };
+    const sendResult = onSend(
+      message,
+      images.length > 0 ? images : undefined,
+      isWelcome ? localWorkspace : undefined,
+    );
     resetInput();
+    if (sendResult && typeof sendResult.then === 'function') {
+      const sentDraftKey = draftKey;
+      void sendResult.then(
+        (accepted) => { if (accepted === false) restoreInput(sentDraft, sentDraftKey); },
+        // A send that throws definitely did not take the message.
+        () => restoreInput(sentDraft, sentDraftKey),
+      );
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -696,7 +854,7 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
         setSelectedIndex((prev) => (prev + 1) % suggestions.length);
         return;
       }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.altKey && !composingRef.current)) {
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.altKey && !isImeComposing(e, composingRef.current))) {
         e.preventDefault();
         applySuggestion(suggestions[selectedIndex]);
         return;
@@ -720,27 +878,19 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
         return;
       }
     }
-    // Option/Alt + Enter → insert newline at cursor position (Mac: Option+Enter, Win: Alt+Enter)
-    if (e.key === 'Enter' && e.altKey && !composingRef.current) {
-      e.preventDefault();
-      const textarea = textareaRef.current;
-      if (textarea) {
-        const start = textarea.selectionStart ?? text.length;
-        const end = textarea.selectionEnd ?? text.length;
-        const newVal = text.substring(0, start) + '\n' + text.substring(end);
-        setText(newVal);
-        requestAnimationFrame(() => {
-          if (textareaRef.current) {
-            textareaRef.current.selectionStart = start + 1;
-            textareaRef.current.selectionEnd = start + 1;
-          }
-        });
+    if (e.key === 'Enter' && !isImeComposing(e, composingRef.current)) {
+      const action = resolveEnterAction(e, { behavior: enterBehavior, isMac: isMacOS() });
+      // 'native' means the textarea inserts the newline itself — leaving the
+      // default action alone preserves the browser's caret handling and undo
+      // stack, so it is deliberately the do-nothing branch.
+      if (action === 'send') {
+        e.preventDefault();
+        handleSend();
+      } else if (action === 'insert') {
+        e.preventDefault();
+        const textarea = textareaRef.current;
+        if (textarea) setText(insertNewlineAtCursor(textarea));
       }
-      return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !composingRef.current) {
-      e.preventDefault();
-      handleSend();
     }
   };
 
@@ -759,6 +909,13 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
 
   const hasAttachments = images.length > 0 || files.length > 0 || references.length > 0;
   const hasContent = text.trim().length > 0 || selectedSkill !== null || selectedAgent !== null || hasAttachments;
+
+  // Send-button tooltip. With no standing hint in the composer, this is the
+  // only place the shortcuts are written down, so it has to track both the
+  // chosen behavior and the platform's send modifier.
+  const sendTooltip = enterBehavior === 'enter'
+    ? t.chat.sendTooltipEnterSends
+    : format(t.chat.sendTooltipModifierSends, { modifier: isMacOS() ? '⌘' : 'Ctrl' });
 
   // Determine placeholder based on selected command or scenario
   const placeholder = disabled
@@ -951,7 +1108,8 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
 
           {/* Bottom Toolbar */}
           {isWelcome ? (
-            /* Welcome variant: FolderSelector + [+] + --- + [Model ∨] + Start button */
+            /* Workspace context lives below the input card. The send toolbar
+               stays a single, calm row even in a narrow center pane. */
             <div className="flex items-center gap-2 px-5 pb-3.5">
               {/* AgentSelector entry hidden from UI; multi-agent logic remains intact */}
               {/* <AgentSelector
@@ -960,63 +1118,62 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
                 onSelect={setSelectedAgent}
                 disabledAgentSet={disabledAgentSet}
               /> */}
-              <FolderSelector
-                currentPath={localWorkspace}
-                recentPaths={recentPaths}
-                onSelect={handleSelectFolder}
-                onClear={handleClearWorkspace}
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleAttach}
-                aria-label={t.chat.addAttachment}
-                className="btn-ghost h-7 w-7 text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-[var(--abu-bg-hover)] rounded-lg"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-              <div className="flex-1" />
-
-              {/* Model picker — right-aligned, before Start button */}
-              <PermissionModeChip conversationId={null} />
-              <div className="relative" ref={modelPickerRef}>
-                <button
-                  onClick={() => setShowModelPicker(!showModelPicker)}
-                  title={modelDisplay}
-                  className={cn(
-                    'btn-ghost flex items-center gap-1 px-2 py-1 text-minor font-normal rounded-md transition-colors max-w-[180px]',
-                    hasActiveProvider
-                      ? 'text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-[var(--abu-bg-hover)]'
-                      : 'text-[var(--abu-clay)] hover:text-[var(--abu-clay-hover)] hover:bg-[var(--abu-clay-bg)]'
-                  )}
+              <div className="flex flex-1 items-center">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleAttach}
+                  aria-label={t.chat.addAttachment}
+                  className="btn-ghost h-7 w-7 shrink-0 rounded-lg text-[var(--abu-text-tertiary)] hover:bg-[var(--abu-bg-hover)] hover:text-[var(--abu-text-primary)]"
                 >
-                  <span className="truncate">{modelDisplay}</span>
-                  <ChevronDown className={cn('h-3 w-3 transition-transform shrink-0', showModelPicker && 'rotate-180')} />
-                </button>
-                <ModelSelector
-                  open={showModelPicker}
-                  onClose={() => setShowModelPicker(false)}
-                  anchorRef={modelPickerRef as React.RefObject<HTMLElement>}
-                />
+                  <Plus className="h-4 w-4" />
+                </Button>
               </div>
 
-              <Button
-                size="icon"
-                onClick={handleSend}
-                disabled={!hasContent}
-                className={cn(
-                  'h-7 w-7 rounded-lg transition-colors',
-                  hasContent
-                    ? 'bg-[var(--abu-clay)] hover:bg-[var(--abu-clay-hover)] text-white shadow-sm'
-                    : 'bg-[var(--abu-bg-hover)] text-[var(--abu-text-muted)] cursor-not-allowed hover:bg-[var(--abu-bg-hover)]'
-                )}
-              >
-                <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
-              </Button>
+              {/* Model picker — right-aligned, before Start button */}
+              <div className="ml-auto flex min-w-0 max-w-full items-center gap-1">
+                <PermissionModeChip conversationId={null} />
+                <div className="relative min-w-0 max-w-[180px]" ref={modelPickerRef}>
+                  <button
+                    onClick={() => setShowModelPicker(!showModelPicker)}
+                    title={modelDisplay}
+                    className={cn(
+                      'btn-ghost flex min-w-0 max-w-[180px] items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-minor font-normal transition-colors',
+                      hasActiveProvider
+                        ? 'text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-[var(--abu-bg-hover)]'
+                        : 'text-[var(--abu-clay)] hover:text-[var(--abu-clay-hover)] hover:bg-[var(--abu-clay-bg)]'
+                    )}
+                  >
+                    <span className="min-w-0 truncate whitespace-nowrap">{modelDisplay}</span>
+                    <ChevronDown className={cn('h-3 w-3 transition-transform shrink-0', showModelPicker && 'rotate-180')} />
+                  </button>
+                  <ModelSelector
+                    open={showModelPicker}
+                    onClose={() => setShowModelPicker(false)}
+                    anchorRef={modelPickerRef as React.RefObject<HTMLElement>}
+                  />
+                </div>
+
+                <Button
+                  size="icon"
+                  onClick={handleSend}
+                  disabled={!hasContent}
+                  title={sendTooltip}
+                  aria-label={sendTooltip}
+                  className={cn(
+                    'h-7 w-7 shrink-0 rounded-lg transition-colors',
+                    hasContent
+                      ? 'bg-[var(--abu-clay)] hover:bg-[var(--abu-clay-hover)] text-white shadow-sm'
+                      : 'bg-[var(--abu-bg-hover)] text-[var(--abu-text-muted)] cursor-not-allowed hover:bg-[var(--abu-bg-hover)]'
+                  )}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </Button>
+              </div>
             </div>
           ) : (
             /* Chat variant: [+] --- [Model ∨] [Stop/Send] */
-            <div className="flex items-center justify-between px-4 pb-2.5 pt-0.5">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-4 pb-2.5 pt-0.5">
               {/* Left Actions */}
               <div className="flex items-center gap-0.5">
                 {/* AgentSelector entry hidden from UI; multi-agent logic remains intact */}
@@ -1039,21 +1196,21 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
               </div>
 
               {/* Right Actions: Model picker + Context indicator + Send / Stop */}
-              <div className="flex items-center gap-1">
+              <div className="ml-auto flex min-w-0 max-w-full items-center gap-1">
                 <PermissionModeChip conversationId={activeConvIdForIndicator} />
                 {/* Model picker */}
-                <div className="relative" ref={modelPickerRef}>
+                <div className="relative min-w-0 max-w-[180px]" ref={modelPickerRef}>
                   <button
                     onClick={() => setShowModelPicker(!showModelPicker)}
                     title={modelDisplay}
                     className={cn(
-                      'btn-ghost flex items-center gap-1 px-2 py-1 text-minor font-normal rounded-md transition-colors max-w-[180px]',
+                      'btn-ghost flex min-w-0 max-w-[180px] items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-minor font-normal transition-colors',
                       hasActiveProvider
                         ? 'text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-[var(--abu-bg-hover)]'
                         : 'text-[var(--abu-clay)] hover:text-[var(--abu-clay-hover)] hover:bg-[var(--abu-clay-bg)]'
                     )}
                   >
-                    <span className="truncate">{modelDisplay}</span>
+                    <span className="min-w-0 truncate whitespace-nowrap">{modelDisplay}</span>
                     <ChevronDown className={cn('h-3 w-3 transition-transform shrink-0', showModelPicker && 'rotate-180')} />
                   </button>
                   <ModelSelector
@@ -1085,6 +1242,8 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
                     size="icon"
                     onClick={handleSend}
                     disabled={!hasContent || disabled}
+                    title={sendTooltip}
+                    aria-label={sendTooltip}
                     className={cn(
                       'h-7 w-7 rounded-lg transition-colors',
                       hasContent && !disabled
@@ -1099,6 +1258,25 @@ export default function ChatInput({ variant, onSend, disabled, scenarioPlacehold
             </div>
           )}
         </div>
+
+        {/* New-task context: hidden when the conversation/project already
+            supplies a workspace. A temporary selection remains visible until
+            first send so it never vanishes before the task is actually bound. */}
+        {showWorkspaceContextBar && (
+          <div
+            data-abu-workspace-context
+            className="mt-2 flex min-h-10 items-center rounded-xl bg-[var(--abu-bg-muted)] px-2 py-1"
+          >
+            <FolderSelector
+              currentPath={localWorkspace}
+              recentPaths={recentPaths}
+              onSelect={handleSelectFolder}
+              onClear={handleClearWorkspace}
+              appearance="context-bar"
+              className="min-w-0 max-w-full"
+            />
+          </div>
+        )}
 
         {/* Promote-to-project hint: shown only on welcome when the bound
             workspace isn't already a project AND the user hasn't dismissed

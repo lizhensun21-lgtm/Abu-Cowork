@@ -19,10 +19,11 @@
  *   5. A packaged HTML preview receives the shared element-picker script.
  *   6. The bundled browser MCP adopts a visible in-app tab and completes
  *      navigate/snapshot/fill/click/extract/screenshot through Chromium.
- *   7. With fully isolated temporary app data, the packaged frontend reaches
- *      the packaged sidecar, completes a loopback-only model request, persists
- *      the conversation, restores it after restart, and kills command/MCP
- *      descendant trees on abort, timeout, stop, and hard crash.
+ *   7. With fully isolated temporary app data, the packaged frontend survives
+ *      an HTML-widget child-frame navigation, reaches the packaged sidecar,
+ *      completes a loopback-only model request, persists the conversation,
+ *      restores it after restart, and kills command/MCP descendant trees on
+ *      abort, timeout, stop, and hard crash.
  *
  * Run: npm run smoke:electron:packaged   (after `npm run pack:electron`)
  *
@@ -39,6 +40,12 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  enterUpstreamChatFromProjectManagementPortal,
+  isValidNativeHelperIdentity,
+  PACKAGED_CHAT_PLACEHOLDER,
+} from './electron-packaged-smoke-contract.mjs';
+
 const require = createRequire(import.meta.url);
 const { getCurrentFuseWire, FuseV1Options } = require('@electron/fuses');
 const FUSE_DISABLED = '0'.charCodeAt(0);
@@ -46,7 +53,7 @@ const FUSE_ENABLED = '1'.charCodeAt(0);
 const OUT = process.env.ABU_ELECTRON_SMOKE_OUTPUT || 'release-electron';
 const E2E_OUT = `${OUT}-e2e`;
 const READY_TIMEOUT = 45_000;
-const CHAT_PLACEHOLDER = /想让阿布帮你做点什么？|What can Abu help you with\?/;
+const CHAT_PLACEHOLDER = PACKAGED_CHAT_PLACEHOLDER;
 const STOP_BUTTON_SELECTOR = 'button[aria-label="停止"], button[aria-label="Stop"]';
 const TEST_API_KEY = 'abu-packaged-e2e-key-not-a-real-secret';
 const TEST_MODEL_ID = 'abu-packaged-e2e-model';
@@ -1512,15 +1519,16 @@ async function inspectPackagedBrowserView(app, tabId, screenshotData) {
       let windowComposite = null;
       let compositeError = '';
       let windowCompositeTrusted = false;
+      let screenCaptureGranted = false;
       let compositeSourceType = 'window';
       let compositeSourceId = '';
       let windowCompositePng = '';
       if (process.platform === 'darwin') {
         try {
-          windowCompositeTrusted =
+          screenCaptureGranted =
             systemPreferences.getMediaAccessStatus('screen') === 'granted';
         } catch {
-          windowCompositeTrusted = false;
+          screenCaptureGranted = false;
         }
       }
       try {
@@ -1531,7 +1539,7 @@ async function inspectPackagedBrowserView(app, tabId, screenshotData) {
         mainWindow.moveTop();
         await new Promise((resolve) => setTimeout(resolve, 200));
 
-        if (process.platform === 'darwin' && windowCompositeTrusted) {
+        if (process.platform === 'darwin' && screenCaptureGranted) {
           compositeSourceType = 'screen';
           const display = screen.getDisplayMatching(windowBounds);
           const displays = screen.getAllDisplays();
@@ -1552,6 +1560,17 @@ async function inspectPackagedBrowserView(app, tabId, screenshotData) {
           if (compositeSource) {
             compositeSourceId = `${compositeSource.id}:${compositeSource.display_id}`;
             const sourceSize = compositeSource.thumbnail.getSize();
+            // TCC status alone is not proof that desktopCapturer produced an
+            // authoritative screen image. Only make composition mandatory
+            // after Electron returns a concrete source WITH a non-empty
+            // thumbnail — contended runners intermittently hand back a
+            // source whose image is 0x0, which is no evidence either way
+            // (observed failing v0.39.0: trusted=true + composite=null while
+            // the view's own draw evidence was all green).
+            if (sourceSize.width <= 0 || sourceSize.height <= 0) {
+              compositeError = 'desktop source returned an empty thumbnail';
+            } else {
+            windowCompositeTrusted = true;
             const scaleX = sourceSize.width / display.bounds.width;
             const scaleY = sourceSize.height / display.bounds.height;
             const x = Math.max(
@@ -1577,6 +1596,9 @@ async function inspectPackagedBrowserView(app, tabId, screenshotData) {
                 windowCompositePng = cropped.toPNG().toString('base64');
               }
             }
+            }
+          } else {
+            compositeError = 'screen capture was granted but returned no desktop source';
           }
         } else if (process.platform !== 'darwin') {
           const mediaSourceId = mainWindow.getMediaSourceId();
@@ -1590,12 +1612,18 @@ async function inspectPackagedBrowserView(app, tabId, screenshotData) {
           });
           const compositeSource = sources.find((source) => source.id === mediaSourceId);
           if (compositeSource) {
+            compositeSourceId = `${compositeSource.id}:${compositeSource.display_id}`;
+            const sourceSize = compositeSource.thumbnail.getSize();
             // GitHub's non-interactive Windows runner can expose no capturable
             // top-level windows. Treat composition as authoritative only when
-            // Electron actually returned this window as a desktop source.
-            windowCompositeTrusted = true;
-            compositeSourceId = `${compositeSource.id}:${compositeSource.display_id}`;
-            windowComposite = analyze(compositeSource.thumbnail);
+            // Electron actually returned this window as a desktop source with
+            // a non-empty thumbnail (same empty-image guard as macOS).
+            if (sourceSize.width <= 0 || sourceSize.height <= 0) {
+              compositeError = 'desktop source returned an empty thumbnail';
+            } else {
+              windowCompositeTrusted = true;
+              windowComposite = analyze(compositeSource.thumbnail);
+            }
           }
         }
       } catch (error) {
@@ -2077,17 +2105,11 @@ async function main() {
       process.platform !== 'win32' ||
       (windowChrome?.menuVisible === false && windowChrome?.menuBarAutoHide === true);
 
-    // Exercise the same BrowserWindow close event produced by the native ×.
-    // A fresh profile defaults to "ask", so the close must reach React and
-    // render an actionable prompt instead of being swallowed by main.
-    await window.getByPlaceholder(CHAT_PLACEHOLDER).waitFor({
-      state: 'visible',
-      timeout: READY_TIMEOUT,
-    });
     // A fully isolated profile legitimately opens the first-run guide after
     // persisted settings hydrate. Exercise that user-visible step before
-    // checking title-bar controls; otherwise its modal backdrop correctly
-    // intercepts every click and produces a false Windows interaction failure.
+    // checking the PM-first shell or title-bar controls; otherwise its modal
+    // backdrop correctly intercepts every click and produces a false Windows
+    // interaction failure.
     const firstRunGuide = window.locator('[data-abu-guide-modal="true"]');
     await firstRunGuide.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
     if (await firstRunGuide.isVisible()) {
@@ -2097,17 +2119,31 @@ async function main() {
       await firstRunGuide.waitFor({ state: 'hidden', timeout: READY_TIMEOUT });
     }
     checks.packagedFirstRunGuideHandled = !(await firstRunGuide.isVisible());
+
+    // The project-management fork deliberately starts in its Portal. Prove
+    // that root, Overview, and the Portal-owned sidebar are present before
+    // crossing the supported "Back to Abu" boundary. The rest of this smoke
+    // then exercises the unchanged upstream chat/runtime surface.
+    Object.assign(
+      checks,
+      await enterUpstreamChatFromProjectManagementPortal(window, READY_TIMEOUT),
+    );
+
+    // Exercise the same BrowserWindow close event produced by the native ×.
+    // A fresh profile defaults to "ask", so the close must reach React and
+    // render an actionable prompt instead of being swallowed by main.
     if (process.platform === 'win32') {
       const toolbarLayout = await window.evaluate(() => {
         const titlebar = document.querySelector('[data-abu-windows-native-titlebar]');
         const titlebarSafeArea = document.querySelector('[data-abu-windows-titlebar-safe-area]');
         const toolbar = document.querySelector('[data-abu-windows-toolbar]');
+        const workspaceControls = document.querySelector('[data-abu-windows-workspace-controls]');
         const appLayout = document.querySelector('[data-abu-app-layout]');
         const main = document.querySelector('main');
-        if (!titlebar || !titlebarSafeArea || !toolbar || !appLayout || !main) return null;
+        if (!titlebar || !titlebarSafeArea || !workspaceControls || !appLayout || !main) return null;
         const titlebarRect = titlebar.getBoundingClientRect();
         const titlebarSafeAreaRect = titlebarSafeArea.getBoundingClientRect();
-        const toolbarRect = toolbar.getBoundingClientRect();
+        const workspaceControlsRect = workspaceControls.getBoundingClientRect();
         const mainRect = main.getBoundingClientRect();
         const menus = [...document.querySelectorAll('[data-window-menu]')]
           .map((menu) => {
@@ -2165,17 +2201,16 @@ async function main() {
             top: titlebarSafeAreaRect.top,
             bottom: titlebarSafeAreaRect.bottom,
           },
-          toolbar: {
-            left: toolbarRect.left,
-            right: toolbarRect.right,
-            top: toolbarRect.top,
-            bottom: toolbarRect.bottom,
-            height: toolbarRect.height,
-            background: getComputedStyle(toolbar).backgroundColor,
+          toolbarPresent: Boolean(toolbar),
+          workspaceControls: {
+            left: workspaceControlsRect.left,
+            right: workspaceControlsRect.right,
+            top: workspaceControlsRect.top,
+            bottom: workspaceControlsRect.bottom,
+            pointerEvents: getComputedStyle(workspaceControls).pointerEvents,
           },
           appPaddingTop: Number.parseFloat(getComputedStyle(appLayout).paddingTop),
           appBackground: getComputedStyle(appLayout).backgroundColor,
-          toolbarBottom: toolbarRect.bottom,
           mainTop: mainRect.top,
           menus,
           dragRegions,
@@ -2184,7 +2219,7 @@ async function main() {
       });
       checks.packagedWindowsTitlebarLayout =
         toolbarLayout !== null &&
-        Math.abs(toolbarLayout.titlebar.height - 36) <= 1 &&
+        Math.abs(toolbarLayout.titlebar.height - 30) <= 1 &&
         toolbarLayout.titlebar.background === toolbarLayout.appBackground &&
         toolbarLayout.titlebar.left >= -1 &&
         toolbarLayout.titlebar.right <= toolbarLayout.viewportWidth + 1 &&
@@ -2198,28 +2233,28 @@ async function main() {
           menu.top >= toolbarLayout.titlebarSafeArea.top - 1 &&
           menu.bottom <= toolbarLayout.titlebarSafeArea.bottom + 1
         )) &&
-        toolbarLayout.dragRegions.length === 2 &&
-        toolbarLayout.dragRegions.map((region) => region.group).join(',') === 'titlebar,toolbar' &&
+        toolbarLayout.dragRegions.length === 1 &&
+        toolbarLayout.dragRegions[0]?.group === 'titlebar' &&
         toolbarLayout.dragRegions.every((region) => (
           region.appRegion === 'drag' &&
           region.width >= 32 &&
-          Math.abs(region.height - 36) <= 1
+          Math.abs(region.height - 30) <= 1
         ));
       checks.packagedWindowsToolbarLayout =
         toolbarLayout !== null &&
-        Math.abs(toolbarLayout.toolbar.height - 36) <= 1 &&
+        toolbarLayout.toolbarPresent === false &&
         toolbarLayout.appPaddingTop <= 0.5 &&
-        toolbarLayout.mainTop >= toolbarLayout.toolbarBottom + 7 &&
-        toolbarLayout.toolbar.background === toolbarLayout.appBackground &&
-        toolbarLayout.toolbar.left >= -1 &&
-        toolbarLayout.toolbar.right <= toolbarLayout.viewportWidth + 1 &&
+        toolbarLayout.mainTop >= toolbarLayout.titlebar.bottom + 7 &&
+        toolbarLayout.workspaceControls.pointerEvents === 'none' &&
+        toolbarLayout.workspaceControls.left >= -1 &&
+        toolbarLayout.workspaceControls.right <= toolbarLayout.viewportWidth + 1 &&
         toolbarLayout.controls.length >= 2 &&
         toolbarLayout.controls.every((control) => (
           control.pointerEvents !== 'none' &&
-          control.left >= toolbarLayout.toolbar.left - 1 &&
-          control.right <= toolbarLayout.toolbar.right + 1 &&
-          control.top >= toolbarLayout.toolbar.top - 1 &&
-          control.bottom <= toolbarLayout.toolbar.bottom + 1
+          control.left >= -1 &&
+          control.right <= toolbarLayout.viewportWidth + 1 &&
+          control.top >= toolbarLayout.mainTop - 1 &&
+          control.bottom <= toolbarLayout.mainTop + 45
         ));
 
       // CSS app-region checks cannot prove that Windows' native hit testing
@@ -2353,9 +2388,10 @@ async function main() {
       checks.packagedMacToolbarLayout = true;
     }
 
-    // Exercise all three controls on every real packaged desktop platform.
-    // A drag-region regression manifests as Playwright's click being intercepted,
-    // which is exactly the RC25 macOS and early Windows failure mode.
+    // Exercise the platform header controls plus the original New Task entry
+    // in the sidebar on every real packaged desktop platform. A drag-region
+    // regression manifests as Playwright's click being intercepted, which is
+    // exactly the RC25 macOS and early Windows failure mode.
     const sidebarControl = window.locator('[data-window-control="sidebar"]');
     const initialSidebarTitle = await sidebarControl.getAttribute('title');
     if (!initialSidebarTitle) throw new Error('sidebar control label is missing');
@@ -2383,7 +2419,7 @@ async function main() {
         );
       });
     });
-    const newTaskControl = window.locator('[data-window-control="new-task"]');
+    const newTaskControl = window.locator('[data-sidebar-action="new-task"]');
     let sidebarChangedForNewTask = false;
     if (!(await newTaskControl.isVisible())) {
       await sidebarControl.click();
@@ -2568,6 +2604,30 @@ async function main() {
     } catch (err) {
       checks.sandboxLauncherExecutes = false;
       errors.sandboxLauncher = String(err);
+    }
+    try {
+      const helperResult = spawnSync(helperPath, [], {
+        input: `${JSON.stringify({ id: 1, method: 'hello', params: {} })}\n`,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      const response = JSON.parse(String(helperResult.stdout || '').trim());
+      checks.nativeHelperHandshake = isValidNativeHelperIdentity(
+        response,
+        helperResult.status,
+        process.platform,
+      );
+      if (!checks.nativeHelperHandshake) {
+        errors.nativeHelperHandshake = [
+          `status=${String(helperResult.status)}`,
+          `stdout=${JSON.stringify(helperResult.stdout)}`,
+          `stderr=${JSON.stringify(helperResult.stderr)}`,
+          helperResult.error ? `error=${String(helperResult.error)}` : '',
+        ].filter(Boolean).join(' ');
+      }
+    } catch (err) {
+      checks.nativeHelperHandshake = false;
+      errors.nativeHelperHandshake = String(err);
     }
     try {
       const helperResult = spawnSync(helperPath, [], {
@@ -2925,6 +2985,26 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
     // ── packaged task assertion: renderer → packaged sidecar → local mock ──
     try {
       await configureLocalMockProvider(window, mock.baseUrl);
+      // Regression for the v0.37 Windows spinner: an HTML widget's `srcdoc`
+      // child-frame navigation used to trigger `did-start-loading` and clear
+      // the top-level renderer's sidecar subscriptions. Arm the exact failure
+      // mode immediately before the real user task; the response assertion
+      // below proves the packaged main→preload sidecar channel survived it.
+      await window.evaluate(() => new Promise((resolve, reject) => {
+        const iframe = document.createElement('iframe');
+        iframe.hidden = true;
+        const timeout = setTimeout(() => {
+          iframe.remove();
+          reject(new Error('srcdoc child frame did not load'));
+        }, 5_000);
+        iframe.addEventListener('load', () => {
+          clearTimeout(timeout);
+          iframe.remove();
+          resolve(true);
+        }, { once: true });
+        iframe.srcdoc = '<!doctype html><title>sidecar lifecycle regression</title>';
+        document.body.appendChild(iframe);
+      }));
       const input = window.getByPlaceholder(CHAT_PLACEHOLDER);
       await input.fill(prompt);
       await input.press('Enter');
@@ -2946,6 +3026,7 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
         timeout: READY_TIMEOUT,
       });
       checks.packagedTaskRendered = true;
+      checks.packagedTaskSurvivesChildFrameNavigation = true;
 
       if (process.platform === 'win32') {
         let rightPanel = window.locator('[data-abu-right-panel]');
@@ -2957,15 +3038,18 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
         }
         await rightPanel.waitFor({ state: 'visible', timeout: READY_TIMEOUT });
         const rightPanelLayout = await window.evaluate(() => {
+          const titlebar = document.querySelector('[data-abu-windows-native-titlebar]');
           const toolbar = document.querySelector('[data-abu-windows-toolbar]');
+          const workspaceControls = document.querySelector('[data-abu-windows-workspace-controls]');
           const panel = document.querySelector('[data-abu-right-panel]');
           const tabs = document.querySelector('[data-abu-workspace-tabs]');
-          if (!toolbar || !panel || !tabs) return null;
-          const toolbarRect = toolbar.getBoundingClientRect();
+          if (!titlebar || !workspaceControls || !panel || !tabs) return null;
+          const titlebarRect = titlebar.getBoundingClientRect();
           const panelRect = panel.getBoundingClientRect();
           const tabsRect = tabs.getBoundingClientRect();
           return {
-            toolbarBottom: toolbarRect.bottom,
+            toolbarPresent: Boolean(toolbar),
+            titlebarBottom: titlebarRect.bottom,
             panelTop: panelRect.top,
             tabsTop: tabsRect.top,
             panelRight: panelRect.right,
@@ -2974,8 +3058,10 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
         });
         checks.packagedWindowsRightPanelClearsToolbar =
           rightPanelLayout !== null &&
-          rightPanelLayout.panelTop >= rightPanelLayout.toolbarBottom + 7 &&
-          rightPanelLayout.tabsTop >= rightPanelLayout.toolbarBottom + 7 &&
+          rightPanelLayout.toolbarPresent === false &&
+          rightPanelLayout.panelTop >= rightPanelLayout.titlebarBottom + 7 &&
+          rightPanelLayout.tabsTop >= rightPanelLayout.titlebarBottom + 7 &&
+          Math.abs(rightPanelLayout.panelTop - rightPanelLayout.tabsTop) <= 1 &&
           rightPanelLayout.panelRight <= rightPanelLayout.viewportWidth + 1;
       } else {
         checks.packagedWindowsRightPanelClearsToolbar = true;
@@ -3167,10 +3253,33 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
       // launcher wrapper through app.process(), and killing that wrapper does
       // not crash the packaged application.
       await restoredInput.waitFor({ state: 'visible', timeout: READY_TIMEOUT });
+      // Killing the stopped task's command tree happens on the sidecar's fast
+      // path, before the shell finishes finalizing the aborted run and the
+      // conversation leaves 'running'. Anything submitted inside that gap is
+      // staged as a follow-up by ChatInput, and the abort terminal then parks
+      // the queue as paused — so the crash task never starts.
+      //
+      // Do NOT try to gate this on a timing signal. Two attempts failed here:
+      // the Stop button hides on `agentStatus` (flipped by the click itself,
+      // not at the end of finalization), and the durable `runState`
+      // "interrupted" row is written at the START of finalization, so relying
+      // on the write debounce to push it past the end only held on the faster
+      // arm64 runner and lost the race on Intel. Absorb the staging instead:
+      // if this prompt was parked, resume it, which is exactly what a user
+      // would do and leaves nothing to time.
       await restoredInput.fill(crashPrompt);
       await restoredInput.press('Enter');
+      const resumeQueueButton = window
+        .locator('button:has-text("继续队列"), button:has-text("Resume queue")')
+        .last();
       await waitUntil(
-        () => fs.existsSync(crashTree.resultPath),
+        async () => {
+          if (fs.existsSync(crashTree.resultPath)) return true;
+          if (await resumeQueueButton.isVisible().catch(() => false)) {
+            await resumeQueueButton.click().catch(() => {});
+          }
+          return fs.existsSync(crashTree.resultPath);
+        },
         'the hard-crash command tree to start',
       );
       readLiveTaggedTree(crashTree.resultPath, crashTree.marker, 'hard Electron crash');
@@ -3182,6 +3291,7 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
     } catch (err) {
       checks.packagedTaskReachedMock ??= false;
       checks.packagedTaskRendered ??= false;
+      checks.packagedTaskSurvivesChildFrameNavigation ??= false;
       checks.packagedTaskPersisted ??= false;
       checks.packagedBrowserMcpInitializes ??= false;
       checks.packagedBrowserVisibleTabAdopted ??= false;

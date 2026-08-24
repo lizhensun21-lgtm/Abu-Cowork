@@ -17,6 +17,7 @@ import type {
 } from '../../types';
 import type { ConfirmationInfo } from '../tools/commandSafety';
 import type { FilePermissionCallback, ToolInvoker } from './ports/toolInvoker';
+import type { SettingsReader } from './ports/settingsReader';
 import { processToolResult } from '../session/sessionMemory';
 import { evaluatePlanGate, getPlanMode } from './planMode';
 import { emitHook } from './lifecycleHooks';
@@ -25,6 +26,7 @@ import { setComputerUseBatchMode, setSkipAutoScreenshot } from '../tools/builtin
 import { setComputerUseActive, incrementComputerUseStep, setCurrentAction, isSessionWindowHidden, setSessionWindowHidden, pauseComputerUseStatus } from './computerUseStatus';
 import { getI18n } from '../../i18n';
 import { TOOL_NAMES } from '../tools/toolNames';
+import { isReadOnlyCommand } from '../tools/readOnlyDetector';
 import { invoke } from '@tauri-apps/api/core';
 import { getChatDelta } from './ports/chatDelta';
 import { getConversationReader } from './ports/conversationReader';
@@ -32,7 +34,8 @@ import { setLoopContext, clearLoopContext } from './permissionBridge';
 import type { EventRouter } from './eventRouter';
 import { createLogger } from '../logging/logger';
 import { startToolSpan } from '../observability/langfuse';
-import { matchesToolPattern } from '../skill/toolFilter';
+import { matchesToolPattern, matchesToolName } from '../skill/toolFilter';
+import { groupToolCallsByConcurrency, resolveToolConcurrencySafety } from './toolConcurrency';
 
 const logger = createLogger('toolExecutor');
 
@@ -55,7 +58,7 @@ function actionToDescription(action: string, input: Record<string, unknown>): st
     case 'move': return `移动鼠标 (${input.x}, ${input.y})`;
     case 'scroll': return `滚动 ${input.direction}`;
     case 'drag': return `拖拽 (${input.startX},${input.startY}) → (${input.endX},${input.endY})`;
-    case 'type': return `输入: ${(input.text as string)?.slice(0, 30) ?? ''}`;
+    case 'type': return '输入文本';
     case 'key': return `按键: ${input.modifiers ? (input.modifiers as string[]).join('+') + '+' : ''}${input.key}`;
     case 'wait': return `等待 ${input.duration ?? 1000}ms`;
     default: return action;
@@ -84,6 +87,8 @@ export interface ToolBatchParams {
   /** ToolInvoker port instance, resolved once by the caller (agentLoop.ts)
    *  and threaded in — same discipline as the other resolve-once locals. */
   toolInvoker: ToolInvoker;
+  /** Frozen provider/model snapshot for nested delegate tools. */
+  settingsReader: SettingsReader;
   /** Whether the loop will continue (tool_use stop reason) */
   continueLoop: boolean;
   /** Current context window usage (0-100). Scales tool result truncation under pressure. */
@@ -95,6 +100,8 @@ export interface ToolBatchResult {
   mcpChanged: boolean;
   /** A trusted tool requested an explicit user recovery choice. */
   requiresUserRecovery: boolean;
+  /** Transient, in-memory observations for deterministic loop governance. */
+  observations: import('./loopGuards').ToolLoopObservation[];
 }
 
 type ToolExecResult = {
@@ -133,10 +140,16 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
     continueLoop,
     contextUsagePercent,
     toolInvoker,
+    settingsReader,
   } = params;
 
   const chatDelta = getChatDelta();
-  const blockedTools = new Set(params.blockedTools ?? []);
+  // Pattern-matched (not exact-name Set match) so a `server__*` namespace
+  // block from resolveTools' model-visible filter (agentLoop.ts) is equally
+  // authoritative here — the fail-closed check has to cover exactly what was
+  // hidden from the model, including tool names this module never enumerates
+  // (e.g. dynamically-registered MCP tools).
+  const blockedTools = params.blockedTools ?? [];
   const allowedTools = params.allowedTools ?? [];
 
   // Update the assistant message with tool calls
@@ -153,6 +166,7 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
     eventRouter,
     loopId,
     conversationId,
+    settingsReader,
     toolCallToStepId,
     blockedTools: params.blockedTools,
     allowedTools: params.allowedTools,
@@ -171,7 +185,7 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
         duration: 0,
       };
     }
-    if (blockedTools.has(tc.name)) {
+    if (blockedTools.some((pattern) => matchesToolName(tc.name, pattern))) {
       return {
         id: tc.id,
         result: `Error: tool "${tc.name}" is blocked for this agent run`,
@@ -341,11 +355,43 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
   const hasComputerTool = collectedToolCalls.some(tc => tc.name === TOOL_NAMES.COMPUTER);
 
   const allRunCommand = collectedToolCalls.every(tc => tc.name === TOOL_NAMES.RUN_COMMAND);
-  const strategy = hasComputerTool ? 'computer-sequential' : allRunCommand ? 'command-sequential' : 'parallel';
+
+  // A run_command batch may serialize because commands can have implicit
+  // dependencies (npm install → npm build). But when EVERY command in the
+  // batch is read-only (grep/ls/cat — same classifier commandTools declares
+  // as its isConcurrencySafe predicate), there is no ordering dependency and
+  // parallel execution cuts the batch wall-clock from sum-of-latencies to
+  // max. isReadOnlyCommand is called directly rather than through the tool
+  // registry: the registry's isConcurrencySafe is a function and does not
+  // cross the sidecar RPC boundary (SerializableToolDefinition carries only
+  // name/description/inputSchema), so a registry lookup would silently
+  // disable this on the sidecar-hosted loop. The pure classifier works
+  // identically in both planes.
+  const allCommandsConcurrencySafe = allRunCommand &&
+    collectedToolCalls.every(tc =>
+      typeof tc.input.command === 'string' &&
+      tc.input.command.trim() !== '' &&
+      isReadOnlyCommand(tc.input.command),
+    );
+
+  // Single source of truth for the batch routing — the execution branches
+  // below switch on this same value, so the log can never disagree with
+  // what actually ran. 'concurrency-grouped' (not the misleading 'parallel')
+  // names the mixed-batch fallback: it does NOT run everything in parallel —
+  // it groups calls by each one's isConcurrencySafe verdict
+  // (groupToolCallsByConcurrency in toolConcurrency.ts), so a batch mixing
+  // safe and unsafe calls still serializes around the unsafe ones.
+  const strategy = hasComputerTool
+    ? 'computer-sequential'
+    : !allRunCommand
+      ? 'concurrency-grouped'
+      : allCommandsConcurrencySafe
+        ? 'command-parallel'
+        : 'command-sequential';
   logger.info('Tool batch started', { toolCount: collectedToolCalls.length, strategy });
 
   let results: PromiseSettledResult<ToolExecResult>[];
-  if (hasComputerTool) {
+  if (strategy === 'computer-sequential') {
     // Sequential execution for computer use batches.
     // Window hide is only needed when batch contains actions that physically interact
     // with the screen (click, type, etc.) — Abu's window may block the target.
@@ -401,7 +447,8 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
     pauseComputerUseStatus();
 
     // run_command may have implicit dependencies (e.g. npm install → npm build), serialize them
-    if (allRunCommand) {
+    // — unless the whole batch was proven concurrency-safe above (read-only commands).
+    if (strategy === 'command-sequential') {
       const sequentialResults: PromiseSettledResult<ToolExecResult>[] = [];
       for (const tc of collectedToolCalls) {
         if (abortController.signal.aborted) break;
@@ -413,10 +460,51 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
         }
       }
       results = sequentialResults;
-    } else {
-      // Parallel execution for non-command batches
+    } else if (strategy === 'command-parallel') {
+      // Every call already proven read-only by isReadOnlyCommand (the
+      // allCommandsConcurrencySafe check above) — run the whole batch in one
+      // parallel pass directly, WITHOUT re-deriving per-call safety through
+      // toolInvoker.getAllTools() below: that registry lookup is a function
+      // value that does not survive the sidecar RPC boundary (and isn't
+      // guaranteed to carry run_command's definition at all in every
+      // ToolInvoker implementation), so re-checking it here would silently
+      // defeat the whole point of computing allCommandsConcurrencySafe via
+      // the RPC-safe classifier in the first place.
       const toolPromises = collectedToolCalls.map(tc => executeSingleTool(tc));
       results = await Promise.allSettled(toolPromises);
+    } else {
+      // Concurrency-aware scheduling for genuinely mixed batches (not
+      // all-run_command): consecutive concurrency-safe calls run in
+      // parallel; a concurrency-unsafe call (or a call to an unresolved
+      // tool, or one whose isConcurrencySafe throws on this input) runs
+      // alone and serially, preserving its position in the model's original
+      // order. See toolConcurrency.ts for the grouping/resolution rules.
+      const allTools = toolInvoker.getAllTools();
+      const batches = groupToolCallsByConcurrency(collectedToolCalls, (tc) =>
+        resolveToolConcurrencySafety(
+          allTools.find(t => t.name === tc.name),
+          tc.input,
+        ),
+      );
+
+      const batchedResults: PromiseSettledResult<ToolExecResult>[] = [];
+      for (const batch of batches) {
+        if (abortController.signal.aborted) break;
+        if (batch.safe) {
+          const settled = await Promise.allSettled(batch.calls.map(tc => executeSingleTool(tc)));
+          batchedResults.push(...settled);
+        } else {
+          for (const tc of batch.calls) {
+            try {
+              const value = await executeSingleTool(tc);
+              batchedResults.push({ status: 'fulfilled', value });
+            } catch (err) {
+              batchedResults.push({ status: 'rejected', reason: err });
+            }
+          }
+        }
+      }
+      results = batchedResults;
     }
   }
 
@@ -513,5 +601,23 @@ export async function executeToolBatch(params: ToolBatchParams): Promise<ToolBat
     (result) => result.status === 'fulfilled' && Boolean(result.value.metadata?.sandboxRecovery),
   );
 
-  return { mcpChanged, requiresUserRecovery };
+  const observations = results.map((result, index) => {
+    const toolCall = collectedToolCalls[index];
+    if (result.status === 'fulfilled') {
+      return {
+        name: toolCall?.name ?? 'unknown',
+        input: toolCall?.input ?? {},
+        result: result.value.result,
+        error: result.value.error,
+      };
+    }
+    return {
+      name: toolCall?.name ?? 'unknown',
+      input: toolCall?.input ?? {},
+      result: String(result.reason),
+      error: true,
+    };
+  });
+
+  return { mcpChanged, requiresUserRecovery, observations };
 }

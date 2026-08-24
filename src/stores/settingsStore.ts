@@ -1,3 +1,4 @@
+import type { ComposerEnterBehavior } from '@/components/chat/composerKeys';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
@@ -18,6 +19,7 @@ import {
   writeSecretOrDelete,
   deleteSecret,
   listFailedSecrets,
+  listSecrets,
   clearAllSecrets,
 } from '@/utils/secretStore';
 // Relocated to a pure module so the sidecar bundle (and anything else that
@@ -52,6 +54,39 @@ function fafSecret(promise: Promise<void>, label: string): void {
     }));
     console.warn(`[secrets] ${label} failed:`, err);
   });
+}
+
+/**
+ * Fire-and-forget secret write that also clears the key's decrypt-failed
+ * marker once the write round-trips. Without this, `failedSecretKeys` (set
+ * once by `bootstrapSecrets` at launch) kept the "re-enter your key" banner
+ * up for the whole session even after the user successfully re-entered the
+ * key — making the fix look like it didn't take until the next restart.
+ */
+function fafSecretWrite(key: string, promise: Promise<void>, label: string): void {
+  fafSecret(
+    promise
+      .then(() => {
+        const { failedSecretKeys, secretWriteFailedKeys } = useSettingsStore.getState();
+        if (failedSecretKeys.includes(key) || secretWriteFailedKeys.includes(key)) {
+          useSettingsStore.setState({
+            failedSecretKeys: failedSecretKeys.filter((k) => k !== key),
+            secretWriteFailedKeys: secretWriteFailedKeys.filter((k) => k !== key),
+          });
+        }
+      })
+      .catch((err) => {
+        // Surface the failure on the affected card (the value still works via
+        // the plaintext fallback), then rethrow so fafSecret keeps its
+        // fallback-flipping and logging behavior.
+        const { secretWriteFailedKeys } = useSettingsStore.getState();
+        if (!secretWriteFailedKeys.includes(key)) {
+          useSettingsStore.setState({ secretWriteFailedKeys: [...secretWriteFailedKeys, key] });
+        }
+        throw err;
+      }),
+    label,
+  );
 }
 
 function syncComputerUseGate(enabled: boolean): void {
@@ -185,6 +220,15 @@ export interface SettingsState {
   networkWhitelist: string[];
   allowPrivateNetworks: boolean;
   closeAction: 'ask' | 'minimize' | 'quit';
+  /**
+   * What a bare Enter does in the chat composer.
+   *  - 'enter'   — Enter sends; Shift/Alt+Enter insert a newline (default,
+   *                and what the app has always done).
+   *  - 'newline' — Enter inserts a newline; ⌘/Ctrl+Enter sends. Added for
+   *                users whose IME swallows Shift+Enter (common with Chinese
+   *                IMEs on Windows, where Shift toggles 中/英).
+   */
+  composerEnterBehavior: ComposerEnterBehavior;
   updateInfo: UpdateInfo | null;
   updateChecking: boolean;
   lastUpdateCheck: number;
@@ -198,7 +242,19 @@ export interface SettingsState {
    *  Do NOT add to partialize. */
   guideOpen: boolean;
   behaviorSensorEnabled: boolean;
+  /** User opted out of anonymous usage/error reporting. Personal mode had no
+   *  way to turn reporting off; enterprise deployments already honour the
+   *  server-side telemetryEnabled flag. */
+  telemetryOptOut: boolean;
   computerUseEnabled: boolean;
+  /**
+   * Per-origin browser-automation verdicts, keyed by exact origin
+   * (scheme://host[:port], no wildcards). Mirrors the shape competitors
+   * converge on: `denied` beats `allowed` beats absent-(ask-every-time).
+   * Written from the browser confirmation dialog's "always allow this site"
+   * action; revocable from Settings › Capabilities.
+   */
+  browserSitePermissions: Record<string, 'allowed' | 'denied'>;
   preventSleep: boolean;
   allowSkillCommands: boolean;
   soulInitialized: boolean;
@@ -245,6 +301,15 @@ export interface SettingsState {
    * "please re-enter" hint on affected provider cards.
    */
   failedSecretKeys: string[];
+
+  /**
+   * Secret-store keys whose most recent write (or delete) FAILED — e.g. the
+   * OS keychain / safeStorage is broken so the key could not be encrypted.
+   * The value still works this session and is kept in localStorage via the
+   * plaintext fallback, but the user should know it isn't stored securely.
+   * Ephemeral — never persisted; cleared per key once a later write succeeds.
+   */
+  secretWriteFailedKeys: string[];
 
   /**
    * One-shot flag for the v0.15 sensitive-memory audit. Set to true after the
@@ -340,6 +405,7 @@ interface SettingsActions {
   setNetworkWhitelist: (whitelist: string[]) => void;
   setAllowPrivateNetworks: (allow: boolean) => void;
   setCloseAction: (action: 'ask' | 'minimize' | 'quit') => void;
+  setComposerEnterBehavior: (behavior: ComposerEnterBehavior) => void;
   setUpdateInfo: (info: UpdateInfo | null) => void;
   setUpdateChecking: (checking: boolean) => void;
   setLastUpdateCheck: (time: number) => void;
@@ -351,7 +417,10 @@ interface SettingsActions {
   openGuide: () => void;
   closeGuide: () => void;
   setBehaviorSensorEnabled: (enabled: boolean) => void;
+  setTelemetryOptOut: (optOut: boolean) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
+  setBrowserSitePermission: (origin: string, verdict: 'allowed' | 'denied') => void;
+  removeBrowserSitePermission: (origin: string) => void;
   setPreventSleep: (enabled: boolean) => void;
   setSoulInitialized: (initialized: boolean) => void;
   setProactivity: (level: 'shy' | 'companion' | 'butler') => void;
@@ -538,7 +607,11 @@ export const useSettingsStore = create<SettingsStore>()(
     (set) => ({
       // ── Provider & Model defaults ──
       providers: defaultProviders,
-      activeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' },
+      // Must name a model that exists in PROVIDER_CONFIGS.anthropic.models —
+      // nothing downstream validates membership (reconcileActiveProvider only
+      // checks the provider), so a stale id here rides every fresh install's
+      // first request. Pinned by settingsStore.test.ts.
+      activeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
       recentModels: [],
       favoriteModels: [],
       auxiliaryServices: {},
@@ -575,6 +648,7 @@ export const useSettingsStore = create<SettingsStore>()(
       networkWhitelist: [],
       allowPrivateNetworks: true,
       closeAction: 'ask' as 'ask' | 'minimize' | 'quit',
+      composerEnterBehavior: 'enter' as ComposerEnterBehavior,
       updateInfo: null,
       updateChecking: false,
       lastUpdateCheck: 0,
@@ -585,7 +659,9 @@ export const useSettingsStore = create<SettingsStore>()(
       guideShown: false,
       guideOpen: false,
       behaviorSensorEnabled: false,
+      telemetryOptOut: false,
       computerUseEnabled: false,
+      browserSitePermissions: {},
       preventSleep: false,
       allowSkillCommands: true,
       soulInitialized: false,
@@ -600,6 +676,7 @@ export const useSettingsStore = create<SettingsStore>()(
         bypass: [],
       },
       failedSecretKeys: [],
+      secretWriteFailedKeys: [],
       // Defaults to false so existing users get the audit on first v0.15 launch.
       // The migration below sets `false` explicitly for upgraders; new installs
       // start with this default (also false).
@@ -641,7 +718,7 @@ export const useSettingsStore = create<SettingsStore>()(
           return update;
         });
         // Mirror apiKey to encrypted secret store.
-        fafSecret(writeSecretOrDelete(SECRET_KEYS.provider(id), cleanApiKey), `addProvider(${id})`);
+        fafSecretWrite(SECRET_KEYS.provider(id), writeSecretOrDelete(SECRET_KEYS.provider(id), cleanApiKey), `addProvider(${id})`);
         return id;
       },
 
@@ -656,7 +733,8 @@ export const useSettingsStore = create<SettingsStore>()(
         // Only touch the secret store when apiKey is actually being updated;
         // other patches (enabled flag, status, model list) must not clobber it.
         if (Object.prototype.hasOwnProperty.call(patch, 'apiKey')) {
-          fafSecret(
+          fafSecretWrite(
+            SECRET_KEYS.provider(id),
             writeSecretOrDelete(SECRET_KEYS.provider(id), cleanPatch.apiKey ?? ''),
             `updateProvider(${id})`,
           );
@@ -682,7 +760,7 @@ export const useSettingsStore = create<SettingsStore>()(
           }
           return update;
         });
-        fafSecret(deleteSecret(SECRET_KEYS.provider(id)), `removeProvider(${id})`);
+        fafSecretWrite(SECRET_KEYS.provider(id), deleteSecret(SECRET_KEYS.provider(id)), `removeProvider(${id})`);
       },
 
       toggleProvider: (id) => set((s) => ({
@@ -769,7 +847,8 @@ export const useSettingsStore = create<SettingsStore>()(
         set((s) => ({
           auxiliaryServices: { ...s.auxiliaryServices, webSearch: cleaned },
         }));
-        fafSecret(
+        fafSecretWrite(
+          SECRET_KEYS.auxWebSearch,
           writeSecretOrDelete(SECRET_KEYS.auxWebSearch, cleaned?.apiKey ?? ''),
           'setAuxiliaryWebSearch',
         );
@@ -789,7 +868,7 @@ export const useSettingsStore = create<SettingsStore>()(
           const defaultId = s.imageGeneration.defaultId ?? id;
           return { imageGeneration: { backends, defaultId } };
         });
-        fafSecret(writeSecretOrDelete(SECRET_KEYS.imageGenBackend(id), cleanApiKey), `addImageGenBackend(${id})`);
+        fafSecretWrite(SECRET_KEYS.imageGenBackend(id), writeSecretOrDelete(SECRET_KEYS.imageGenBackend(id), cleanApiKey), `addImageGenBackend(${id})`);
         return id;
       },
 
@@ -804,7 +883,8 @@ export const useSettingsStore = create<SettingsStore>()(
           },
         }));
         if (Object.prototype.hasOwnProperty.call(patch, 'apiKey')) {
-          fafSecret(
+          fafSecretWrite(
+            SECRET_KEYS.imageGenBackend(id),
             writeSecretOrDelete(SECRET_KEYS.imageGenBackend(id), cleanPatch.apiKey ?? ''),
             `updateImageGenBackend(${id})`,
           );
@@ -819,7 +899,7 @@ export const useSettingsStore = create<SettingsStore>()(
             : s.imageGeneration.defaultId;
           return { imageGeneration: { backends, defaultId } };
         });
-        fafSecret(deleteSecret(SECRET_KEYS.imageGenBackend(id)), `removeImageGenBackend(${id})`);
+        fafSecretWrite(SECRET_KEYS.imageGenBackend(id), deleteSecret(SECRET_KEYS.imageGenBackend(id)), `removeImageGenBackend(${id})`);
       },
 
       setDefaultImageBackend: (id) => set((s) => ({
@@ -915,6 +995,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setNetworkWhitelist: (networkWhitelist) => set({ networkWhitelist }),
       setAllowPrivateNetworks: (allowPrivateNetworks) => set({ allowPrivateNetworks }),
       setCloseAction: (closeAction) => set({ closeAction }),
+      setComposerEnterBehavior: (composerEnterBehavior) => set({ composerEnterBehavior }),
       setUpdateInfo: (updateInfo) => set({ updateInfo }),
       setUpdateChecking: (updateChecking) => set({ updateChecking }),
       setLastUpdateCheck: (lastUpdateCheck) => set({ lastUpdateCheck }),
@@ -927,6 +1008,15 @@ export const useSettingsStore = create<SettingsStore>()(
       // Closing the guide also marks it as shown so first-launch auto-open never re-triggers.
       closeGuide: () => set({ guideOpen: false, guideShown: true }),
       setBehaviorSensorEnabled: (behaviorSensorEnabled) => set({ behaviorSensorEnabled }),
+      setTelemetryOptOut: (telemetryOptOut) => set({ telemetryOptOut }),
+      setBrowserSitePermission: (origin, verdict) => set((state) => ({
+        browserSitePermissions: { ...state.browserSitePermissions, [origin]: verdict },
+      })),
+      removeBrowserSitePermission: (origin) => set((state) => {
+        const next = { ...state.browserSitePermissions };
+        delete next[origin];
+        return { browserSitePermissions: next };
+      }),
       setComputerUseEnabled: (computerUseEnabled) => {
         set({ computerUseEnabled });
         syncComputerUseGate(computerUseEnabled);
@@ -977,6 +1067,7 @@ export const useSettingsStore = create<SettingsStore>()(
             backends: state.imageGeneration.backends.map((b) => ({ ...b, apiKey: '' })),
           },
           failedSecretKeys: [],
+          secretWriteFailedKeys: [],
         }));
       },
       setPetPosition: (pos) => set({ petPosition: pos }),
@@ -985,9 +1076,24 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: 'abu-settings',
-      version: 42,
+      version: 45,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as Record<string, unknown>;
+
+        if (version < 44) {
+          // Browser site permissions start empty: every site keeps asking until
+          // the user explicitly settles it from the confirmation dialog.
+          if (state.browserSitePermissions === undefined) state.browserSitePermissions = {};
+        }
+
+        // ════════════════════════════════════════════════
+        // V45: Composer Enter behavior. Existing users keep the behavior they
+        // already have muscle memory for — Enter sends — so this defaults to
+        // 'enter' rather than to the new option.
+        // ════════════════════════════════════════════════
+        if (version < 45) {
+          if (state.composerEnterBehavior === undefined) state.composerEnterBehavior = 'enter';
+        }
 
         // ════════════════════════════════════════════════
         // V42: One-time theme reset to 'light'. Before 2026-07-04 (commit
@@ -1003,6 +1109,13 @@ export const useSettingsStore = create<SettingsStore>()(
         // ════════════════════════════════════════════════
         if (version < 42) {
           state.theme = 'light';
+        }
+
+        if (version < 43) {
+          // New opt-out defaults to "still reporting" so upgrading does not
+          // silently change what an existing install already does; the point of
+          // this version is that the switch now exists at all.
+          if (state.telemetryOptOut === undefined) state.telemetryOptOut = false;
         }
 
         // NOTE: the V41 "imageGeneration independent config (C-a)" step lives at
@@ -1799,11 +1912,14 @@ export const useSettingsStore = create<SettingsStore>()(
         networkWhitelist: state.networkWhitelist,
         allowPrivateNetworks: state.allowPrivateNetworks,
         closeAction: state.closeAction,
+        composerEnterBehavior: state.composerEnterBehavior,
         lastUpdateCheck: state.lastUpdateCheck,
         userNickname: state.userNickname,
         userAvatar: state.userAvatar,
         guideShown: state.guideShown,
         behaviorSensorEnabled: state.behaviorSensorEnabled,
+        telemetryOptOut: state.telemetryOptOut,
+        browserSitePermissions: state.browserSitePermissions,
         computerUseEnabled: state.computerUseEnabled,
         preventSleep: state.preventSleep,
         allowSkillCommands: state.allowSkillCommands,
@@ -2047,5 +2163,41 @@ export async function bootstrapSecrets(): Promise<void> {
   // persist saves will now strip apiKey from localStorage.
   if (backfillOk) {
     persistApiKeyPlaintextFallback = false;
+  }
+
+  // Best-effort orphan sweep: `imagegen:<id>` entries whose backend no longer
+  // exists. removeImageGenBackend deletes its own secret, but historical V41
+  // re-runs (each minting a fresh random backend id and bridging the legacy
+  // key onto it) left the previous ids' secrets behind unreferencable — the
+  // ids are random, so no future state can ever point at them again. Scoped
+  // strictly to the `imagegen:` namespace; `aux:imageGen` is deliberately
+  // kept (it's the bridge source, and the only key an app-version rollback
+  // could still read). listSecrets() returns null on Windows/Linux (keyring
+  // has no enumeration API) — skip there. Read backends from the live store,
+  // not the `state` snapshot from before hydration.
+  try {
+    const allKeys = await listSecrets();
+    if (Array.isArray(allKeys)) {
+      // Derive the namespace prefix from SECRET_KEYS itself so a future key
+      // rename can't silently detach the sweep from the keys it targets.
+      const imageGenPrefix = SECRET_KEYS.imageGenBackend('');
+      const live = new Set(
+        useSettingsStore.getState().imageGeneration.backends.map((b) => SECRET_KEYS.imageGenBackend(b.id)),
+      );
+      const orphans = allKeys.filter((k) => k.startsWith(imageGenPrefix) && !live.has(k));
+      if (orphans.length > 0) {
+        // allSettled: one transient keyring failure must neither abort the
+        // sibling deletes nor mislabel the whole sweep as failed — any
+        // survivor is simply retried on the next launch.
+        const outcomes = await Promise.allSettled(orphans.map((k) => deleteSecret(k)));
+        const failed = orphans.filter((_, i) => outcomes[i].status === 'rejected');
+        console.log(
+          `[secrets] orphaned imagegen sweep: removed ${orphans.length - failed.length}/${orphans.length}`,
+          failed.length > 0 ? { failed } : { removed: orphans },
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[secrets] orphaned imagegen secret sweep failed (non-fatal):', err);
   }
 }

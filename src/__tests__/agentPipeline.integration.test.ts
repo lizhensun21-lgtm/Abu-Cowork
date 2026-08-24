@@ -4,7 +4,7 @@
  * Tests the full message → LLM → tool execution → response pipeline.
  * Uses mocked LLM adapter to simulate various response scenarios.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { useChatStore } from '../stores/chatStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTaskExecutionStore } from '../stores/taskExecutionStore';
@@ -37,6 +37,10 @@ vi.mock('../core/llm/openai-compatible', () => ({
 
 vi.mock('../core/llm/tauriFetch', () => ({
   getTauriFetch: vi.fn().mockResolvedValue(vi.fn()),
+}));
+
+vi.mock('../utils/consoleError', () => ({
+  reportError: vi.fn(),
 }));
 
 // Mock tool registry
@@ -91,10 +95,26 @@ vi.mock('../core/skill/loader', () => ({
 
 // Mock context modules
 vi.mock('../core/context/contextManager', () => ({
-  // Real prepareContextMessages returns Message[] — mirror that. (Previously
-  // returned an object, which was silently tolerated until the send path
-  // started calling array methods on the result via rehydrateImageData.)
-  prepareContextMessages: vi.fn().mockImplementation((msgs) => msgs),
+  ContextBudgetError: class ContextBudgetError extends Error {
+    code: string;
+    estimatedTokens: number;
+    inputBudget: number;
+
+    constructor(code: string, estimatedTokens: number, inputBudget: number) {
+      super(code);
+      this.code = code;
+      this.estimatedTokens = estimatedTokens;
+      this.inputBudget = inputBudget;
+    }
+  },
+  enforceContextBudget: vi.fn().mockImplementation((msgs) => ({
+    messages: msgs,
+    tokensBefore: 1,
+    tokensAfter: 1,
+    inputBudget: 100000,
+    safetyMarginTokens: 1000,
+    strategy: 'unchanged',
+  })),
   trimOldScreenshots: vi.fn().mockImplementation((msgs) => msgs),
 }));
 
@@ -128,6 +148,11 @@ vi.mock('../core/context/autoCompact', () => ({
     });
   },
   getUsagePercent: vi.fn().mockReturnValue(0.3),
+  // Real clamped math rather than a fixed stub: the published `percent` is what
+  // the compression tests read back, so it has to track the actual token counts.
+  getDisplayPercent: vi.fn().mockImplementation((tokens: number, maxTokens: number) => (
+    maxTokens <= 0 ? 0 : Math.min(100, Math.max(0, Math.round((tokens / maxTokens) * 100)))
+  )),
 }));
 
 vi.mock('../core/context/tokenEstimator', () => ({
@@ -161,9 +186,12 @@ vi.mock('../core/agent/permissionBridge', () => ({
 
 vi.mock('../core/agent/userInputQueue', () => ({
   drainQueuedInputs: vi.fn().mockReturnValue([]),
+  drainSystemQueuedInputs: vi.fn().mockReturnValue([]),
   clearInputQueue: vi.fn(),
   hasQueuedInputs: vi.fn().mockReturnValue(false),
+  hasSystemQueuedInputs: vi.fn().mockReturnValue(false),
   enqueueUserInput: vi.fn(),
+  pauseUserInputQueue: vi.fn(),
 }));
 
 vi.mock('../core/agent/executionSnapshot', () => ({
@@ -182,6 +210,7 @@ vi.mock('../core/agent/toolExecutor', () => ({
   executeToolBatch: vi.fn().mockResolvedValue({
     mcpChanged: false,
     requiresUserRecovery: false,
+    observations: [],
   }),
 }));
 
@@ -194,6 +223,13 @@ vi.mock('../core/capabilities', () => ({
 }));
 
 vi.mock('../core/llm/modelCapabilities', () => ({
+  resolveAgentModelCapabilities: vi.fn().mockReturnValue({
+    toolCalling: 'native',
+    structuredArguments: 'reliable',
+    computerUseTier: 'full',
+    capabilitySource: 'builtin',
+    vision: true,
+  }),
   resolveCapabilities: vi.fn().mockReturnValue({
     contextWindow: 200000,
     maxOutputTokens: 8192,
@@ -221,6 +257,7 @@ vi.mock('../core/tools/toolNames', () => ({
     WEB_SEARCH: 'web_search',
     DELEGATE_TO_AGENT: 'delegate_to_agent',
     SHOW_WIDGET: 'show_widget',
+    TOOL_SEARCH: 'tool_search',
   },
   // agentLoop calls this on every tool_use event — the real function, not a
   // stub, so hidden-marking semantics stay faithful in the pipeline test.
@@ -237,6 +274,7 @@ vi.mock('../core/tools/toolSearch', () => ({
     deferredTools: [],
   })),
   buildDeferredToolsSummary: vi.fn().mockReturnValue(''),
+  promoteSearchedDeferredTools: vi.fn(),
 }));
 
 vi.mock('../core/logging/logger', () => ({
@@ -266,6 +304,7 @@ vi.mock('../core/session/sessionDir', () => ({
 vi.mock('../core/llm/promptSections', () => ({
   sectionsToString: vi.fn().mockReturnValue('system prompt'),
   mergeSections: vi.fn().mockImplementation((a, b) => [...(a || []), ...(b || [])]),
+  orderSectionsForCaching: vi.fn().mockImplementation((sections) => sections),
 }));
 
 vi.mock('../core/skill/preprocessor', () => ({
@@ -297,8 +336,23 @@ import { escalateMaxOutputTokens } from '../core/agent/loopGuards';
 import type { StreamEvent, Message } from '../types';
 // Mocked module reference — used to override token estimator per-test
 import * as tokenEstimatorModule from '../core/context/tokenEstimator';
+import * as contextManagerModule from '../core/context/contextManager';
+import * as toolSearchModule from '../core/tools/toolSearch';
 
 describe('Agent Pipeline Integration', () => {
+  // runAgentLoop lazily `await import()`s these on its hot path, so the FIRST
+  // test in this file paid their cold Vite transform inside its own body
+  // (measured 3.9 s vs 18 ms for the next test) against the default 5 s
+  // testTimeout — and under v8 coverage or a loaded runner it crossed the line.
+  // A timed-out body is not cancelled, so it kept mutating shared state after
+  // vitest moved on. Warm them here instead: hookTimeout is 30 s.
+  beforeAll(async () => {
+    await Promise.all([
+      import('../core/agent/entryOrchestration'),
+      import('../core/memdir/relevance'),
+    ]);
+  });
+
   beforeEach(() => {
     useChatStore.setState({
       conversations: {},
@@ -389,6 +443,54 @@ describe('Agent Pipeline Integration', () => {
     expect(userMsg?.loopId).toBe(errorMsg?.loopId);
   });
 
+  it('keeps the user message when routing fails before the loop starts', async () => {
+    // Regression: routing produces the cleanInput the user message is built
+    // from, so it runs BEFORE that message is persisted. A throw there escaped
+    // as an unhandled rejection and the typed input vanished with no trace —
+    // the composer had already cleared.
+    const orchestration = await import('../core/agent/entryOrchestration');
+    const spy = vi
+      .spyOn(orchestration, 'precomputeOrchestration')
+      .mockRejectedValue(new Error('skill index unavailable'));
+
+    try {
+      const convId = useChatStore.getState().createConversation();
+      const result = await runAgentLoop(convId, 'route me somewhere');
+
+      expect(result.reason).toBe('error');
+
+      const conv = useChatStore.getState().conversations[convId];
+      const userMsg = conv.messages.find((m) => m.role === 'user');
+      expect(userMsg?.content).toBe('route me somewhere');
+
+      const errorMsg = conv.messages.find(
+        (m) => m.role === 'assistant'
+          && typeof m.content === 'string'
+          && m.content.includes('skill index unavailable'),
+      );
+      expect(errorMsg).toBeDefined();
+      expect(userMsg?.loopId).toBe(errorMsg?.loopId);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('shows an actionable local error and skips the provider when the latest input is too large', async () => {
+    vi.mocked(contextManagerModule.enforceContextBudget).mockImplementationOnce(() => {
+      throw new contextManagerModule.ContextBudgetError('INPUT_TOO_LARGE', 20_000, 10_000);
+    });
+
+    const convId = useChatStore.getState().createConversation();
+    await runAgentLoop(convId, 'oversized input');
+
+    expect(mockClaudeChat).not.toHaveBeenCalled();
+    const assistantText = useChatStore.getState().conversations[convId].messages
+      .filter((message) => message.role === 'assistant')
+      .map((message) => typeof message.content === 'string' ? message.content : '')
+      .join('\n');
+    expect(assistantText).toMatch(/上下文容量|too large/i);
+  });
+
   it('escalateMaxOutputTokens pure function works correctly', () => {
     // Already tested in agentLoop.test.ts, but verify integration
     const result = escalateMaxOutputTokens(8192, 200000, 1);
@@ -424,6 +526,92 @@ describe('Agent Pipeline Integration', () => {
 
       expect(result.reason).toBe('no_progress');
       expect(calls).toBe(3); // two tolerated retries, abort on the third
+    });
+
+    it('stops a well-formed repeated tool loop after three unchanged observations', async () => {
+      let calls = 0;
+      mockClaudeChat.mockImplementation(
+        async (_m: unknown, _o: unknown, onEvent: (e: StreamEvent) => void) => {
+          calls++;
+          onEvent({
+            type: 'tool_use',
+            id: `search-${calls}`,
+            name: 'tool_search',
+            input: { query: 'computer' },
+          });
+          onEvent({ type: 'done', stopReason: 'tool_use' });
+        },
+      );
+      const repeatedBatch = {
+        mcpChanged: false,
+        requiresUserRecovery: false,
+        observations: [{
+          name: 'tool_search',
+          input: { query: 'computer' },
+          result: 'no deferred tools',
+          error: false,
+        }],
+      };
+      vi.mocked(executeToolBatch)
+        .mockResolvedValueOnce(repeatedBatch)
+        .mockResolvedValueOnce(repeatedBatch)
+        .mockResolvedValueOnce(repeatedBatch);
+
+      const convId = useChatStore.getState().createConversation();
+      const result = await runAgentLoop(convId, 'operate the computer');
+
+      expect(result.reason).toBe('no_progress');
+      expect(calls).toBe(3);
+    });
+
+    it('promotes only after a successful tool_search observation in the loop process', async () => {
+      const rareTool = {
+        name: 'rare_clipboard',
+        description: 'Read clipboard',
+        inputSchema: { type: 'object' as const, properties: {} },
+        execute: async () => 'ok',
+      };
+      vi.mocked(toolSearchModule.classifyTools).mockReturnValueOnce({
+        coreTools: [],
+        deferredTools: [rareTool],
+      });
+      mockClaudeChat
+        .mockImplementationOnce(
+          async (_m: unknown, _o: unknown, onEvent: (e: StreamEvent) => void) => {
+            onEvent({
+              type: 'tool_use',
+              id: 'search-1',
+              name: 'tool_search',
+              input: { query: 'clipboard' },
+            });
+            onEvent({ type: 'done', stopReason: 'tool_use' });
+          },
+        )
+        .mockImplementationOnce(
+          async (_m: unknown, _o: unknown, onEvent: (e: StreamEvent) => void) => {
+            onEvent({ type: 'text', text: 'ready' });
+            onEvent({ type: 'done', stopReason: 'end_turn' });
+          },
+        );
+      vi.mocked(executeToolBatch).mockResolvedValueOnce({
+        mcpChanged: false,
+        requiresUserRecovery: false,
+        observations: [{
+          name: 'tool_search',
+          input: { query: 'clipboard' },
+          result: '### rare_clipboard\nRead clipboard',
+          error: false,
+        }],
+      });
+
+      const convId = useChatStore.getState().createConversation();
+      await runAgentLoop(convId, 'read my clipboard');
+
+      expect(toolSearchModule.promoteSearchedDeferredTools).toHaveBeenCalledWith(
+        { query: 'clipboard' },
+        [rareTool],
+        convId,
+      );
     });
 
     it('stops with reason=max_turns when the turn cap is reached', async () => {
@@ -463,6 +651,7 @@ describe('Agent Pipeline Integration', () => {
       vi.mocked(executeToolBatch).mockResolvedValueOnce({
         mcpChanged: false,
         requiresUserRecovery: true,
+        observations: [],
       });
 
       const convId = useChatStore.getState().createConversation();
@@ -576,11 +765,11 @@ describe('Agent Pipeline Integration', () => {
       expect(execs.every((e) => e.plannedSteps.length === 0)).toBe(true);
     });
 
-    it('drained queued messages surface as user bubbles at consumption time', async () => {
-      const { drainQueuedInputs } = await import('../core/agent/userInputQueue');
+    it('drained system wake-ups remain hidden user-context messages', async () => {
+      const { drainSystemQueuedInputs } = await import('../core/agent/userInputQueue');
       const convId = useChatStore.getState().createConversation();
-      vi.mocked(drainQueuedInputs).mockReturnValueOnce([
-        { id: 'q1', text: '数完说你好', timestamp: 123 },
+      vi.mocked(drainSystemQueuedInputs).mockReturnValueOnce([
+        { id: 'q1', text: '后台任务完成', timestamp: 123, isSystem: true },
       ]);
       mockClaudeChat.mockImplementation(
         async (_m: unknown, _o: unknown, onEvent: (e: StreamEvent) => void) => {
@@ -592,9 +781,9 @@ describe('Agent Pipeline Integration', () => {
       await runAgentLoop(convId, '从1数到3');
 
       const conv = useChatStore.getState().conversations[convId];
-      const queuedMsg = conv.messages.find((m) => m.role === 'user' && m.content === '数完说你好');
+      const queuedMsg = conv.messages.find((m) => m.role === 'user' && m.content === '后台任务完成');
       expect(queuedMsg).toBeDefined();
-      expect(queuedMsg?.isSystem).toBeFalsy();
+      expect(queuedMsg?.isSystem).toBe(true);
     });
 
     it('keeps an aborted turn that already streamed partial text', async () => {
@@ -647,13 +836,13 @@ describe('Agent Pipeline Integration', () => {
       expect(useChatStore.getState().conversations[convId].activeSkills).toEqual([]);
     });
 
-    it('resets the no-progress counter when a queued-input override rescues the loop (review finding [5])', async () => {
+    it('resets the no-progress counter when a system wake-up rescues the loop (review finding [5])', async () => {
       // Without the reset, a mid-stream user rescue buys only ONE more turn before
       // the (still-3) counter trips. With it, the full 3-turn tolerance is restored:
       // turns 1-3 trip the guard, the rescue at turn 3 resets it, turns 4-6 trip it
       // again → stop at turn 6 (calls===6). Without the reset it would stop at turn 4.
-      const { hasQueuedInputs } = await import('../core/agent/userInputQueue');
-      vi.mocked(hasQueuedInputs).mockReturnValueOnce(true); // rescue exactly once (turn 3)
+      const { hasSystemQueuedInputs } = await import('../core/agent/userInputQueue');
+      vi.mocked(hasSystemQueuedInputs).mockReturnValueOnce(true); // rescue exactly once (turn 3)
 
       let calls = 0;
       mockClaudeChat.mockImplementation(
@@ -671,17 +860,8 @@ describe('Agent Pipeline Integration', () => {
       expect(calls).toBe(6);
     });
 
-    it('surfaces staged queue messages as user bubbles when the loop aborts (F5)', async () => {
-      // Regression: the abort path called clearInputQueue directly, silently
-      // destroying messages the user staged mid-loop. They must land in the
-      // transcript instead — the aborted loop can't answer them, but the text
-      // has to stay visible.
-      const { drainQueuedInputs } = await import('../core/agent/userInputQueue');
-      // Drain is called at the top of each loop iteration AND (now) in the
-      // abort path: 1st call = loop top (empty), 2nd call = abort drain (item).
-      vi.mocked(drainQueuedInputs)
-        .mockReturnValueOnce([])
-        .mockReturnValueOnce([{ id: 'q9', text: '别丢了我', timestamp: 1 }]);
+    it('pauses staged user follow-ups instead of attaching them to the aborted run', async () => {
+      const { pauseUserInputQueue, drainSystemQueuedInputs } = await import('../core/agent/userInputQueue');
       const convId = useChatStore.getState().createConversation();
       mockClaudeChat.mockImplementation(async () => {
         const err = new Error('Aborted');
@@ -692,15 +872,17 @@ describe('Agent Pipeline Integration', () => {
       const result = await runAgentLoop(convId, 'abort with staged input');
 
       expect(result.reason).toBe('aborted');
-      const conv = useChatStore.getState().conversations[convId];
-      const staged = conv.messages.find((m) => m.role === 'user' && m.content === '别丢了我');
-      expect(staged).toBeDefined();
+      expect(pauseUserInputQueue).toHaveBeenCalledWith(convId);
+      expect(drainSystemQueuedInputs).toHaveBeenCalledWith(convId);
+      expect(useChatStore.getState().conversations[convId].messages).not.toContainEqual(
+        expect.objectContaining({ role: 'user', content: '别丢了我' }),
+      );
     });
 
-    it('image-only send during a running loop starts a normal loop instead of staging (F6)', async () => {
-      // Regression: the concurrency guard staged EVERY interactive send into
-      // the text-only queue — an image-only send was swallowed entirely.
-      // Image/empty sends must fall through to a normal loop start.
+    it('rejects an image-only send during a running in-process loop instead of starting a second stream (F6)', async () => {
+      // The mid-run queue is text-only. An image send must stay with the
+      // composer and wait for the current run; falling through replaces the
+      // live AbortController and races two streams on one conversation.
       const { enqueueUserInput } = await import('../core/agent/userInputQueue');
       const convId = useChatStore.getState().createConversation();
       let release!: () => void;
@@ -722,11 +904,42 @@ describe('Agent Pipeline Integration', () => {
         images: [{ id: 'img-1', data: 'aGk=', mediaType: 'image/png' }],
       });
 
-      expect(second.reason).not.toBe('enqueued');
+      expect(second.reason).toBe('error');
       expect(vi.mocked(enqueueUserInput)).not.toHaveBeenCalled();
 
       release();
       await first;
+      expect(streamCalls).toBe(1);
+    });
+
+    it('rejects a headless send during a running in-process loop instead of starting a second stream', async () => {
+      const { enqueueUserInput } = await import('../core/agent/userInputQueue');
+      const convId = useChatStore.getState().createConversation(undefined, {
+        scheduledTaskId: 'schedule-1',
+        skipActivate: true,
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let streamCalls = 0;
+      mockClaudeChat.mockImplementation(
+        async (_m: unknown, _o: unknown, onEvent: (e: StreamEvent) => void) => {
+          streamCalls++;
+          await gate;
+          onEvent({ type: 'text', text: 'done' });
+          onEvent({ type: 'done', stopReason: 'end_turn' });
+        },
+      );
+
+      const first = runAgentLoop(convId, 'scheduled first');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const second = await runAgentLoop(convId, 'overlapping scheduler delivery');
+
+      expect(second.reason).toBe('error');
+      expect(vi.mocked(enqueueUserInput)).not.toHaveBeenCalled();
+      release();
+      await first;
+      expect(streamCalls).toBe(1);
     });
   });
 
@@ -806,7 +1019,9 @@ describe('Agent Pipeline Integration', () => {
       // Build a history of 10 messages so the cache check fires correctly.
       // runAgentLoop appends the user message, making the effective history
       // 10 messages when it slices messages.slice(0, -1) on each turn.
-      const now = Date.now();
+      // Fixed anchor (TESTING.md §3) — only the relative spacing between
+      // messages matters here, not the absolute value.
+      const now = 1_700_000_000_000;
       const historyMsgs: Message[] = Array.from({ length: 10 }, (_, i) => ({
         id: `hist-${i}`,
         role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
@@ -871,6 +1086,17 @@ describe('Agent Pipeline Integration', () => {
       // level was computed on the pre-compression (10+) message history.
       const conv = useChatStore.getState().conversations[convId];
       expect(conv.contextUsage?.percent).toBeLessThan(60);
+
+      // --- Anchor invariant --------------------------------------------------
+      // The published snapshot must ALSO say how much of the conversation its
+      // token count stands for. Here `tokensUsed` measures the compressed
+      // 3-message payload, but the anchor spans the full raw history — that
+      // pairing is what stops ContextIndicator from re-counting (and thereby
+      // un-compressing) the history and rendering a >100% water level.
+      const usage = conv.contextUsage!;
+      expect(usage.messageCountAtPublish).toBeGreaterThanOrEqual(historyMsgs.length);
+      expect(usage.messageCountAtPublish).toBeLessThanOrEqual(conv.messages.length);
+      expect(usage.tokensUsed).toBeLessThan(180_000); // post-compression, not raw history
     });
   });
 });

@@ -56,15 +56,11 @@
  *   - `agent.abort` → P1-3B-3A: abort one in-flight `agent.run` call by
  *     runId (idempotent, unknown runId silent no-op, same discipline)
  *   - `agent.enqueueInput` → P1-3B-3B, extended by P1-3B-4: `{runId, message
- *     | userMessage, queueId?, isSystem?}` — either (a) the shell
- *     dispatcher's concurrency guard staging a message into an
- *     already-running conversation's run instead of starting a second
- *     agent.run (`userMessage`, no `queueId` — no shell-queue chip to
- *     correlate), or (b) the shell's queued-input forwarder relaying a NEW
- *     entry added to the shell's `userInputQueue` (chip strip) for a
- *     conversation with an active sidecar run (`message` + `queueId`,
- *     id-preserved so `input.consumed` can clear the exact chip once this
- *     run's loop consumes it). Unknown runId silent drop.
+ *     | userMessage, queueId?, isSystem?}` — the shell's queue forwarder
+ *     relays internal system wake-ups into an active run (`message` +
+ *     `queueId`, id-preserved for `input.consumed`). The `userMessage` shape
+ *     remains accepted for backward compatibility, but new user follow-ups
+ *     stay shell-side and start independent runs. Unknown runId silent drop.
  *   - `state.convPatch` → P1-3B-3A: `{runId, patch}` — scalar-field patch
  *     (workspacePath/title/activeSkills/model) applied to that run's
  *     conversation read-mirror. Unknown runId silent drop.
@@ -83,10 +79,8 @@
  *   - `input.consumed` → P1-3B-4: `{ runId, queueIds }` — the sidecar's
  *     `userInputQueue` shim (see shims/userInputQueueRun.ts) sends this
  *     after `agentLoop.ts` drains or clears queued inputs, naming exactly
- *     the ids it consumed. `agentLoopRunner.ts`'s handler removes the same
- *     ids from the shell's `userInputQueue` — clearing the `QueuedMessages
- *     Strip` chip only once the loop actually consumed the message (not a
- *     flash-then-clear). Unknown runId silent drop.
+ *     the ids it consumed. `agentLoopRunner.ts` removes the same system ids
+ *     from the shell queue. Unknown runId silent drop.
  * Reverse requests sidecar→shell (see rpcClient.ts, subagentRunner.ts):
  *   - `tool.invoke` → `{ runId, toolName, input, context }`, response = the
  *     tool's `ToolResult`
@@ -129,6 +123,8 @@ import { fsReadTextFile, fsReadFile, fsWriteTextFile, fsReadDir, fsExists, fsSta
 import { handleSubagentRun, handleSubagentAbort, shutdownAllSubagentRuns } from './subagentHost';
 import {
   handleAgentRun,
+  handleAgentStart,
+  handleAgentGetState,
   handleAgentAbort,
   handleAgentEnqueueInput,
   handleStateConvPatch,
@@ -139,6 +135,7 @@ import {
 } from './agentLoopHost';
 import { resolvePendingResponse, rejectAllPendingRequests } from './rpcClient';
 import { isAuthorizedE2ECrash } from './e2eCrashGate';
+import { applyEnterpriseEntitlementSnapshot } from './enterpriseEntitlementMirror';
 import {
   writeLine,
   makeError,
@@ -351,6 +348,18 @@ function handleMessage(raw: string): void {
     return;
   }
 
+  if (method === 'agent.start') {
+    if (isNotification) return;
+    runAsyncRequest(id, () => Promise.resolve(handleAgentStart(params)));
+    return;
+  }
+
+  if (method === 'run.getState') {
+    if (isNotification) return;
+    runAsyncRequest(id, () => Promise.resolve(handleAgentGetState(params)));
+    return;
+  }
+
   if (method === 'agent.enqueueInput') {
     // Notification only — P1-3B-3B's cross-process concurrency guard: stage
     // a message into an ALREADY-RUNNING run's userInputQueue instead of the
@@ -393,6 +402,20 @@ function handleMessage(raw: string): void {
       handleStateSettings(params);
     } catch (err) {
       log('state.settings handler threw (ignored — notifications get no response)', err);
+    }
+    return;
+  }
+
+  if (method === 'state.enterpriseEntitlement') {
+    // Global, live, fail-closed mirror used by Skill/MCP runtime gates.
+    try {
+      const entitlement = typeof params === 'object' && params !== null
+        ? (params as { entitlement?: unknown }).entitlement
+        : undefined;
+      applyEnterpriseEntitlementSnapshot(entitlement);
+    } catch (err) {
+      applyEnterpriseEntitlementSnapshot(undefined);
+      log('state.enterpriseEntitlement handler threw; access revoked', err);
     }
     return;
   }

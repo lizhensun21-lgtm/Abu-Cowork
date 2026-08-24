@@ -6,6 +6,7 @@ import {
   isReasoningStarvation,
   deriveDeclaredDefaults,
   isKnownModel,
+  resolveAgentModelCapabilities,
   CONTENT_FLOOR_TOKENS,
 } from './modelCapabilities';
 import { classifyThinking } from './model-data/classify';
@@ -90,6 +91,40 @@ describe('modelCapabilities', () => {
       expect(resolveCapabilities('glm-5').vision).toBe(false);
       expect(resolveCapabilities('qwen3-max').vision).toBe(false);
       expect(resolveCapabilities('deepseek-chat').vision).toBe(false);
+    });
+
+    // DeepSeek's vision route arrived after the pinned models.dev snapshot, so it is
+    // declared in overlay/deepseek.json. Without that entry the /deepseek/i pattern
+    // fallback resolves vision:false, normalizeMessages strips every image, and the
+    // model is told the route cannot see pictures — i.e. the feature is silently dead.
+    it('deepseek-v4-flash-vision-exp is the one vision-capable DeepSeek route', () => {
+      expect(resolveCapabilities('deepseek-v4-flash-vision-exp').vision).toBe(true);
+    });
+
+    // The overlay is scoped to one exact id on purpose. If someone "fixes" this in the
+    // /deepseek/i pattern instead, the whole family flips to vision:true and every
+    // text-only DeepSeek route starts sending images that the provider rejects.
+    it('does not leak vision to its text-only DeepSeek siblings', () => {
+      expect(resolveCapabilities('deepseek-v4-flash').vision).toBe(false);
+      expect(resolveCapabilities('deepseek-v4-pro').vision).toBe(false);
+      expect(resolveCapabilities('deepseek-reasoner').vision).toBe(false);
+      // Unlisted deepseek ids keep the conservative pattern fallback.
+      expect(resolveCapabilities('deepseek-v9-imaginary').vision).toBe(false);
+    });
+
+    // The vision route is v4-flash plus image input; official docs give both the same
+    // context/max-output. Only vision and toolResultImages may differ — a drift here
+    // means the overlay was edited without checking it against its sibling.
+    it('mirrors deepseek-v4-flash except for the image-related fields', () => {
+      const vision = resolveCapabilities('deepseek-v4-flash-vision-exp');
+      const flash = resolveCapabilities('deepseek-v4-flash');
+      expect(vision.contextWindow).toBe(flash.contextWindow);
+      expect(vision.maxOutputTokens).toBe(flash.maxOutputTokens);
+      expect(vision.outputCeiling).toBe(flash.outputCeiling);
+      expect(vision.thinking).toBe(flash.thinking);
+      // DeepSeek tool messages carry string content only, so tool-result images ride
+      // a following user message (openai-compatible.ts) rather than the tool role.
+      expect(vision.toolResultImages).toBe('workaround');
     });
   });
 
@@ -230,6 +265,68 @@ describe('modelCapabilities', () => {
 
     it('returns false for an unrecognized id that falls through to FALLBACK_DEFAULT', () => {
       expect(isKnownModel('totally-unknown-xyz')).toBe(false);
+    });
+  });
+
+  describe('resolveAgentModelCapabilities — Computer Use tier', () => {
+    it('classifies built-in vision models as full Computer Use', () => {
+      expect(resolveAgentModelCapabilities({
+        modelId: 'gpt-4o',
+        providerSource: 'builtin',
+      })).toMatchObject({
+        toolCalling: 'native',
+        structuredArguments: 'reliable',
+        computerUseTier: 'full',
+        capabilitySource: 'builtin',
+      });
+    });
+
+    it('classifies built-in DeepSeek as structured instead of unsupported', () => {
+      expect(resolveAgentModelCapabilities({
+        modelId: 'deepseek-chat',
+        providerSource: 'builtin',
+      })).toMatchObject({
+        computerUseTier: 'structured',
+        vision: false,
+        capabilitySource: 'builtin',
+      });
+    });
+
+    it('keeps an undeclared custom proxy conservative even for a familiar model id', () => {
+      expect(resolveAgentModelCapabilities({
+        modelId: 'gpt-4o',
+        providerSource: 'custom',
+      })).toMatchObject({
+        toolCalling: 'text-recovery',
+        structuredArguments: 'unknown',
+        computerUseTier: 'unknown',
+        capabilitySource: 'fallback',
+      });
+    });
+
+    it('allows explicitly declared custom tool support as best-effort', () => {
+      expect(resolveAgentModelCapabilities({
+        modelId: 'private-model',
+        providerSource: 'custom',
+        declared: { supportsTools: true, supportsImages: false },
+      })).toMatchObject({
+        toolCalling: 'native',
+        structuredArguments: 'best-effort',
+        computerUseTier: 'structured',
+        capabilitySource: 'user-declared',
+      });
+    });
+
+    it('treats an explicit no-tools declaration as unsupported', () => {
+      expect(resolveAgentModelCapabilities({
+        modelId: 'gpt-4o',
+        providerSource: 'custom',
+        declared: { supportsTools: false, supportsImages: true },
+      })).toMatchObject({
+        toolCalling: 'none',
+        computerUseTier: 'unsupported',
+        capabilitySource: 'user-declared',
+      });
     });
   });
 });

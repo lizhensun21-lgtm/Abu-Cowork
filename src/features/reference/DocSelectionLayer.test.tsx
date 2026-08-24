@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // src/features/reference/DocSelectionLayer.test.tsx
 //
 // Integration test: selection → toolbar → reference lands in chatStore.pendingReferences
@@ -22,6 +23,20 @@ function selectElement(el: Element): void {
 // --- Tests -------------------------------------------------------------------
 
 describe('DocSelectionLayer integration', () => {
+  it('re-enables native text selection inside Electron drag-region ancestors', () => {
+    const { container } = render(
+      <DocSelectionLayer filePath="/w/订单数据流转说明.md">
+        <p>可选择的业务说明</p>
+      </DocSelectionLayer>,
+    );
+
+    expect(container.querySelector('[data-doc-selection-layer]')).toHaveClass(
+      'h-full',
+      'min-h-0',
+      'select-text',
+    );
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     // Reset chatStore pending references before every test

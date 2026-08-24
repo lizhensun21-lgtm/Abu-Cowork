@@ -48,6 +48,14 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const srcDir = path.resolve(root, 'src');
+const buildTarget = process.env.ABU_BUILD_TARGET === 'enterprise' ? 'enterprise' : 'oss';
+const enterpriseModulesDir = buildTarget === 'enterprise'
+  ? path.resolve(root, '../Abu-enterprise-modules/src')
+  : path.resolve(srcDir, 'enterprise-modules-stub');
+
+if (!existsSync(enterpriseModulesDir)) {
+  throw new Error(`[build-sidecar] ${buildTarget} module directory not found: ${enterpriseModulesDir}`);
+}
 
 /**
  * `vite.config.ts` substitutes the version/distribution globals and
@@ -67,7 +75,7 @@ const packageJson = JSON.parse(readFileSync(path.resolve(root, 'package.json'), 
 const buildVersion = process.env.ABU_BUILD_VERSION?.trim() || packageJson.version;
 const distributions = new Set(['upstream-official', 'abu-project-management', 'source']);
 const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-management';
-const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.34.2';
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.41.0';
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(buildVersion)) {
   throw new Error(`[build-sidecar] Invalid ABU_BUILD_VERSION: ${buildVersion}`);
 }
@@ -97,6 +105,7 @@ const SHIM_TARGETS = [
   // what behavior it preserves/documents-as-different.
   { real: path.resolve(srcDir, 'i18n/index.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/i18nRun.ts') },
   { real: path.resolve(srcDir, 'core/enterprise/llm-resolver.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/enterpriseCredsRun.ts') },
+  { real: path.resolve(srcDir, 'core/enterprise/entitlement.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/enterpriseEntitlementRun.ts') },
   { real: path.resolve(srcDir, 'core/llm/selectChatAdapter.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/selectChatAdapterRun.ts') },
   { real: path.resolve(srcDir, 'core/agent/lifecycleHooks.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/lifecycleHooksRun.ts') },
   { real: path.resolve(srcDir, 'core/observability/langfuse.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/langfuseRun.ts') },
@@ -144,7 +153,7 @@ const SHIM_TARGETS = [
   { real: path.resolve(srcDir, 'core/agent/computerUseStatus.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/computerUseStatusRun.ts') },
   // Whole-module barrel redirect — builtins.ts drags all ~19 tool-definition files + registry.ts; only clearAllSkillHooks/setComputerUseBatchMode/setSkipAutoScreenshot are consumed sidecar-side — see builtinsRun.ts.
   { real: path.resolve(srcDir, 'core/tools/builtins.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/builtinsRun.ts') },
-  // Real forwarding shim (replaceMessageById via pushFrame, isMessageWrittenToDisk via REQUEST) — see conversationStorageRun.ts.
+  // Real forwarding shim (replaceMessageById + snapshotMessageRevision via pushFrame, loadMessages as a local-fs port) — see conversationStorageRun.ts.
   { real: path.resolve(srcDir, 'core/session/conversationStorage.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/conversationStorageRun.ts') },
   // In-sidecar direct call shim (nested nested subagent shares the parent main-loop run's ports) — see subagentRunnerRun.ts.
   { real: path.resolve(srcDir, 'core/agent/subagentRunner.ts'), shim: path.resolve(__dirname, '../sidecar/src/shims/subagentRunnerRun.ts') },
@@ -414,12 +423,12 @@ async function main() {
     // @anthropic-ai/sdk (and everything else reachable from main.ts) bundles
     // INTO the output — nothing marked external. The packaged app ships
     // sidecar/index.mjs standalone, with no node_modules alongside it.
-    alias: { '@': srcDir },
+    alias: { '@': srcDir, '@enterprise-modules': enterpriseModulesDir },
     define: {
       __APP_VERSION__: JSON.stringify(buildVersion),
       __ABU_DISTRIBUTION__: JSON.stringify(distribution),
       __ABU_UPSTREAM_BASE_VERSION__: JSON.stringify(upstreamBaseVersion),
-      __ENTERPRISE_BUILD__: JSON.stringify(false),
+      __ENTERPRISE_BUILD__: JSON.stringify(buildTarget === 'enterprise'),
     },
     plugins: [shimPlugin, bundleGraphGuardPlugin],
     banner: {

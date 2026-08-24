@@ -8,7 +8,7 @@ const DARK_CHROME = {
   backgroundColor: '#121110',
   symbolColor: '#f0ede8',
 };
-const WINDOWS_TOOLBAR_HEIGHT = 36;
+const WINDOWS_TOOLBAR_HEIGHT = 30;
 // The renderer owns the complete visual title-bar plane. Keeping Electron's
 // Window Controls Overlay background transparent lets theme colors and every
 // full-window scrim flow underneath the native caption buttons automatically.
@@ -20,9 +20,20 @@ const WINDOWS_MENU_IDS = Object.freeze({
   help: 'abu-window-menu-help',
 });
 const windowsMenus = new WeakMap();
+// Kept byte-for-byte in intent with src/styles/index.css. Overlays paint above
+// the chrome but `-webkit-app-region` is an OS-level geometry union that
+// ignores z-index, so any layer over a drag lane must subtract itself or the
+// lane keeps swallowing its clicks. The popper selector covers portaled
+// third-party layers that have no ancestor of ours to inherit the marker from.
 const WINDOW_DRAG_REGION_CSS = [
   '[data-tauri-drag],[data-tauri-drag-region]{-webkit-app-region:drag;-webkit-user-select:none;user-select:none}',
-  '[data-electron-no-drag],[data-electron-no-drag] *{-webkit-app-region:no-drag}',
+  '[data-electron-drag]{-webkit-app-region:drag;-webkit-user-select:none;user-select:none}',
+  '[data-electron-no-drag],[data-electron-no-drag] *:not([data-electron-drag]){-webkit-app-region:no-drag}',
+  '[data-tauri-drag] :where(button,a,input,textarea,select,[role="button"],[contenteditable]),'
+    + '[data-tauri-drag-region] :where(button,a,input,textarea,select,[role="button"],[contenteditable]),'
+    + '[data-electron-drag] :where(button,a,input,textarea,select,[role="button"],[contenteditable])'
+    + '{-webkit-app-region:no-drag}',
+  '[data-radix-popper-content-wrapper],[data-radix-popper-content-wrapper] *{-webkit-app-region:no-drag}',
 ].join('');
 
 function chromeColors(dark) {

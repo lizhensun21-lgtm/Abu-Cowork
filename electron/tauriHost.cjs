@@ -42,6 +42,7 @@ const {
   ACK_CHANNEL: TAURI_LOCAL_STORAGE_ACK,
   MIGRATION_VERSION: TAURI_LOCAL_STORAGE_MIGRATION_VERSION,
   prepareTauriLocalStorageMigration,
+  hasLegacySourceEvidence,
   migrateWindowsSecrets,
   finalizeTauriLocalStorageMigration,
 } = require('./tauriLocalStorageMigration.cjs');
@@ -53,12 +54,22 @@ const {
   cleanupFsWatchesForSender,
 } = require('./fsWatchHost.cjs');
 const { mcpDispatch } = require('./mcpBridge.cjs');
+const { SIDECAR_BRIDGE_STATE_CHANNEL } = require('./sidecarEventChannel.cjs');
+const { sidecarRunRegistry } = require('./sidecarRunRegistry.cjs');
+const {
+  RUNTIME_EVENT_CHANNEL,
+  RUNTIME_DIAGNOSTICS_CHANNEL,
+  configureRuntimeObservability,
+  getRuntimeDiagnostics,
+  runtimeState,
+} = require('./runtimeObservability.cjs');
 const { desktopDispatch, DESKTOP_MISS } = require('./desktopHost.cjs');
 const { popupWindowsMenu, syncMainWindowChromeTheme } = require('./windowChrome.cjs');
 const {
   nativeHelperDispatch,
   NATIVE_HELPER_MISS,
   killNativeHelper,
+  getNativeHelperGeneration,
 } = require('./nativeHelperManager.cjs');
 const {
   createComputerUseGate,
@@ -104,6 +115,7 @@ const {
   validateInvokePayload,
   assertResourceOwner,
 } = require('./securityBoundary.cjs');
+const { wireRendererResourceCleanup } = require('./rendererLifecycle.cjs');
 
 // Window-family state (Phase 2 slice D). `mainWindow` is set by main.cjs right
 // after createWindow() via setMainWindow(); `quitting` is the standard
@@ -228,14 +240,15 @@ function wireWindowEvents(win) {
     e.preventDefault();
     emitEvent('close-requested', null);
   });
-  // Purge this renderer's subscriptions on reload (WebContents survives, no
-  // unlisten fires, the preload callbackId counter resets → stale subs would
-  // cross-wire to the reloaded page's colliding ids).
-  win.webContents.on('did-start-loading', () => {
-    clearSubscriptionsForSender(win.webContents);
+  // Purge this renderer's resources only when its top-level document is being
+  // replaced. Child-frame loads (notably HTML widget `srcdoc` previews) keep
+  // the renderer alive and must not disconnect its main→renderer event bridge.
+  wireRendererResourceCleanup(win.webContents, ({ reason }) => {
+    const subscriptionCount = clearSubscriptionsForSender(win.webContents);
     cleanupFsWatchesForSender(win.webContents);
     cleanupGlobalShortcutsForSender(win.webContents);
     computerUseGate?.revokeSender(win.webContents);
+    runtimeState.noteRendererResourcesCleared({ reason, subscriptionCount });
   });
 }
 
@@ -447,17 +460,22 @@ function emitEvent(event, payload) {
 
 /**
  * Drop every subscription owned by a given WebContents. Called on renderer
- * reload (main.cjs wires webContents 'did-start-loading'): a reload doesn't
- * destroy the WebContents or fire unlisten, and the reloaded page's preload
- * resets its callbackId counter — so stale subscriptions would cross-wire to
- * the fresh page's colliding ids. The reloaded page is gone, so there's no
- * preload callback to notify (unlike unlisten).
+ * reload: a reload doesn't destroy the WebContents or fire unlisten, and the
+ * reloaded page's preload resets its callbackId counter — so stale
+ * subscriptions would cross-wire to the fresh page's colliding ids. The
+ * reloaded page is gone, so there's no preload callback to notify (unlike
+ * unlisten).
  * @param {import('electron').WebContents} sender
+ * @returns {number} number of subscriptions removed
  */
 function clearSubscriptionsForSender(sender) {
+  let removed = 0;
   for (const [eventId, sub] of subscriptions) {
-    if (sub.sender === sender) subscriptions.delete(eventId);
+    if (sub.sender !== sender) continue;
+    subscriptions.delete(eventId);
+    removed++;
   }
+  return removed;
 }
 
 // Commands whose real handler isn't wired yet (next-layer slices B-E) but
@@ -753,11 +771,25 @@ function registerTauriHost(app, options = {}) {
       }
       return await result;
     },
+    // Computer Use must not depend on Apple Events/System Events on macOS. The
+    // native helper resolves NSWorkspace identity there; Windows keeps its
+    // existing foreground-window process probe. Both return the stable
+    // bundle/process identity required by the Host Gate.
     getActiveWindow: async () => {
-      const result = await guiDispatch(app, 'get_active_window', {});
-      if (result === GUI_MISS) throw new Error('active-window provider unavailable');
-      return result;
+      if (process.platform === 'win32') {
+        const result = await guiDispatch(app, 'get_active_window', {});
+        if (result === GUI_MISS) {
+          throw new Error('Windows frontmost-app provider unavailable');
+        }
+        return result;
+      }
+      const result = nativeHelperDispatch('frontmost_app_identity', {});
+      if (result === NATIVE_HELPER_MISS) {
+        throw new Error('native frontmost-app provider unavailable');
+      }
+      return await result;
     },
+    getNativeHelperGeneration,
     killNativeHelper,
     requestTaskApproval: async ({ target, mode }) => {
       const isZh = app.getLocale().toLowerCase().startsWith('zh');
@@ -907,6 +939,7 @@ function registerTauriHost(app, options = {}) {
     paths: migrationPaths,
   });
   let localStorageMigration = null;
+  let fileMigrationResult = null;
   if (migrationArmed || migrateEnv === '1' || migrateEnv === 'dry') {
     const readerName = process.platform === 'win32'
       ? 'tauri-transition-reader.exe'
@@ -925,6 +958,13 @@ function registerTauriHost(app, options = {}) {
       console.log(
         `[tauriLocalStorageMigration] ${localStorageMigration.status}; ${itemCount} item(s)`
       );
+      if (localStorageMigration.sourceChangedSinceMigration === true) {
+        // Completed migrations are never silently re-applied (see
+        // prepareTauriLocalStorageMigration); surface the drift for support.
+        console.log(
+          '[tauriLocalStorageMigration] legacy source changed after completed migration; not re-importing'
+        );
+      }
       if (migrationArmed && localStorageMigration.status === 'error') {
         setMigrationStartupBlock(localStorageMigration.reason);
       }
@@ -954,6 +994,7 @@ function registerTauriHost(app, options = {}) {
         sourceWins: migrationArmed || migrateEnv === '1',
         inventory: options.transitionInventory,
       });
+      fileMigrationResult = result;
       writeMigrationDiagnostics({
         stage: 'file-migration',
         migrationArmed,
@@ -1010,12 +1051,17 @@ function registerTauriHost(app, options = {}) {
         secretSet: (key, value) => secretDispatch('secret_set', { key, value }),
         secretHas: (key) => secretDispatch('secret_has', { key }) === true,
         sourceWins: migrationArmed || migrateEnv === '1',
+        hasLegacySource: hasLegacySourceEvidence(
+          localStorageMigration,
+          fileMigrationResult
+        ),
       });
       console.log(
         `[tauriLocalStorageMigration] Windows secrets: ${secrets.migrated.length} migrated, ` +
           `${secrets.overwritten.length} overwritten from installed Tauri, ` +
           `${secrets.skippedExisting.length} existing, ${secrets.missing.length} absent, ` +
-          `${secrets.failed.length} failed`
+          `${secrets.failed.length} failed` +
+          (secrets.skippedReason ? `; skipped: ${secrets.skippedReason}` : '')
       );
       if (migrationArmed && localStorageMigration.secretMigrationFailed) {
         setMigrationStartupBlock('windows-secret-migration-failed');
@@ -1217,10 +1263,10 @@ function registerTauriHost(app, options = {}) {
       // close, backed by a real `WebContentsView` per tab
       // (electron/browserHost.cjs), porting src-tauri/src/browser.rs for the
       // workspace browser tab. Placed after ptyDispatch and before
-      // windowDispatch — no ordering dependency on either; browserDispatch is
-      // synchronous today (WebContentsView setup/loadURL calls are all
-      // fire-and-forget); if it ever returns a Promise, returning it here still
-      // resolves through this async handler, so no await is needed.
+      // windowDispatch — no ordering dependency on either. Most browser_*
+      // commands are synchronous fire-and-forget; browser_capture returns a
+      // Promise, which resolves through this async handler, so no await is
+      // needed either way.
       const browserResult = browserDispatch(app, cmd, a);
       if (browserResult !== BROWSER_MISS) return browserResult;
       // GUI-families (tray/overlay/window_info/pet) — electron/guiHost.cjs,
@@ -1272,6 +1318,16 @@ function registerTauriHost(app, options = {}) {
               /* deepLinkHost not wired (e.g. a harness) — nothing to flush */
             }
           }
+          // Same flush-on-subscribe deal for shell crashes: a crash observed
+          // before this subscriber existed (startup crashes, the ones that
+          // matter most) is queued rather than delivered to nobody.
+          if (a.event === 'runtime-crash') {
+            try {
+              require('./shellCrashChannel.cjs').flushPendingShellCrashReports();
+            } catch {
+              /* crash channel not wired (e.g. a harness) — nothing to flush */
+            }
+          }
           return id;
         }
         case 'plugin:event|unlisten': {
@@ -1312,6 +1368,30 @@ function registerTauriHost(app, options = {}) {
     } catch {
       e.returnValue = null;
     }
+  });
+
+  ipcMain.on(RUNTIME_EVENT_CHANNEL, (e, payload) => {
+    try {
+      assertTrustedIpcSender(e);
+      configureRuntimeObservability(app);
+      runtimeState.noteRendererEvent(payload);
+    } catch {
+      // Runtime tracing is best-effort and must never affect product behavior.
+    }
+  });
+
+  ipcMain.handle(RUNTIME_DIAGNOSTICS_CHANNEL, async (e) => {
+    assertTrustedIpcSender(e);
+    configureRuntimeObservability(app);
+    return getRuntimeDiagnostics();
+  });
+
+  ipcMain.handle(SIDECAR_BRIDGE_STATE_CHANNEL, async (e, query = {}) => {
+    assertTrustedIpcSender(e);
+    const afterSequence = Number.isSafeInteger(query?.afterSequence) && query.afterSequence >= 0
+      ? query.afterSequence
+      : 0;
+    return sidecarRunRegistry.snapshot(afterSequence);
   });
 }
 

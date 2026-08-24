@@ -1,8 +1,8 @@
 <div align="center">
 
-**English** | [中文](README.zh-CN.md)
+<img src="website/assets/readme-cover.en.jpg" alt="Abu — Your AI Desktop Office Assistant" width="100%" />
 
-<img src="website/assets/abu-avatar.png" width="120" height="120" style="border-radius: 24px" />
+**English** | [中文](README.zh-CN.md)
 
 # Abu
 
@@ -17,6 +17,8 @@ Tell Abu what you need — it reads files, runs commands, writes docs, and build
 [Download](#download) · [Quick Start](#quick-start) · [Features](#features) · [User Guide](docs/User-Guide.md) · [Build from Source](#build-from-source)
 
 </div>
+
+> 🚧 **Multi-Harness integration in progress:** Abu is evolving toward pluggable agent runtimes, with [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) among the first integration targets. Stable releases currently use Abu's native harness.
 
 ---
 
@@ -322,16 +324,23 @@ scope for this baseline.
 git clone https://github.com/PM-Shawn/Abu-Cowork.git
 cd Abu-Cowork
 
-# Install locked dependencies and prepare the worktree-local Electron runtime
-npm ci
+# Prepare worktree-local dependencies, Electron/browser runtimes, sidecar,
+# native helper, sandbox launcher, and the OSS renderer
 npm run setup:electron-dev
 
-# Launch the Electron desktop app (dev data is isolated from installed Abu)
+# Launch the Electron desktop app. The OSS renderer is rebuilt before launch.
 npm run electron:dev
 
-# Frontend only (no Rust required)
+# Enterprise worktree: prepare and launch the private Enterprise renderer
+npm run setup:electron-dev:enterprise
+npm run electron:dev:enterprise
+
+# Frontend-only preview (not desktop acceptance)
 npm run dev
 ```
+
+Tauri is not a feature-development or acceptance target. Its source remains
+only for compatibility with already shipped versions, migration, and rollback.
 
 ### Build
 

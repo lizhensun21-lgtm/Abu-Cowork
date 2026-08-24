@@ -8,6 +8,8 @@ import { useI18n } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { isWindows } from '@/utils/platform';
+import { hasElectronCommandHost } from '@/utils/electronHost';
 
 const MENU_WIDTH = 150; // px — used to right-align / clamp popover menus
 
@@ -20,7 +22,10 @@ function tabIcon(tab: WorkspaceTab) {
 
 function tabTitle(tab: WorkspaceTab, t: ReturnType<typeof useI18n>['t']): string {
   if (tab.kind === 'summary') return t.workspace.summaryTitle;
-  if (tab.kind === 'preview') return getBaseName(tab.filePath);
+  if (tab.kind === 'preview') {
+    if (tab.filePath.startsWith('data:image/')) return t.panel.imagePreview;
+    return getBaseName(tab.filePath);
+  }
   if (tab.kind === 'browser') {
     if (!tab.url) return t.workspace.newTabPage;
     try {
@@ -46,6 +51,7 @@ function tabTitle(tab: WorkspaceTab, t: ReturnType<typeof useI18n>['t']): string
  */
 export default function TabStrip() {
   const { t } = useI18n();
+  const windowsWorkspaceHeader = isWindows() && hasElectronCommandHost();
   const tabs = usePreviewStore((s) => s.tabs);
   const activeTabId = usePreviewStore((s) => s.activeTabId);
   const activateTab = usePreviewStore((s) => s.activateTab);
@@ -54,6 +60,7 @@ export default function TabStrip() {
   const closeAllTabs = usePreviewStore((s) => s.closeAllTabs);
   const reorderTabs = usePreviewStore((s) => s.reorderTabs);
   const openSummary = usePreviewStore((s) => s.openSummary);
+  const openBrowser = usePreviewStore((s) => s.openBrowser);
   const openTerminal = usePreviewStore((s) => s.openTerminal);
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen);
   const setRightPanelCollapsed = useSettingsStore((s) => s.setRightPanelCollapsed);
@@ -187,7 +194,10 @@ export default function TabStrip() {
   return (
     <div
       data-abu-workspace-tabs
-      className="relative shrink-0 flex items-center border-b border-[var(--abu-bg-pressed)] bg-[var(--abu-bg-subtle)] pr-1 overflow-x-auto"
+      className={cn(
+        'relative shrink-0 flex items-center border-b border-[var(--abu-bg-pressed)] bg-[var(--abu-bg-subtle)] pr-1 overflow-x-auto',
+        windowsWorkspaceHeader && 'h-11',
+      )}
     >
       {tabs.map((tab) => {
         const Icon = tabIcon(tab);
@@ -213,7 +223,8 @@ export default function TabStrip() {
               openContextMenu(tab.id, e.clientX, e.clientY);
             }}
             className={cn(
-              'group flex items-center gap-1.5 h-8 px-2.5 max-w-[160px] shrink-0 select-none',
+              'group flex items-center gap-1.5 px-2.5 max-w-[160px] shrink-0 select-none',
+              windowsWorkspaceHeader ? 'h-full' : 'h-8',
               'border-r border-[var(--abu-bg-pressed)] text-minor transition-shadow',
               draggingId === tab.id && 'cursor-grabbing',
               active
@@ -257,6 +268,7 @@ export default function TabStrip() {
             variant="ghost"
             size="icon-xs"
             onClick={toggleNewTabMenu}
+            aria-label={t.workspace.newTab}
             className="ml-0.5 shrink-0 text-[var(--abu-text-tertiary)] hover:text-[var(--abu-clay)]"
           >
             <Plus className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -287,7 +299,7 @@ export default function TabStrip() {
       {(newTabMenuPos || contextMenu) &&
         createPortal(
           <>
-            <div className="fixed inset-0 z-[55]" onClick={closeMenus} onContextMenu={(e) => { e.preventDefault(); closeMenus(); }} />
+            <div data-electron-no-drag className="fixed inset-0 z-[55]" onClick={closeMenus} onContextMenu={(e) => { e.preventDefault(); closeMenus(); }} />
             {newTabMenuPos && (
               <div
                 className="fixed z-[60] min-w-[150px] rounded-md border border-[var(--abu-border)] bg-[var(--abu-bg-muted)] shadow-md py-1"
@@ -297,9 +309,10 @@ export default function TabStrip() {
                   <ListChecks className="w-3.5 h-3.5" strokeWidth={1.5} />
                   {t.workspace.summaryTitle}
                 </button>
-                {/* Browser-tab entry hidden for now — see WorkspacePanel note.
-                    openBrowser + BrowserTab stay wired so existing browser tabs
-                    still render; only the "new browser tab" affordance is gone. */}
+                <button type="button" className={menuItemCls} onClick={() => { openBrowser(); closeMenus(); }}>
+                  <AppWindow className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  {t.workspace.newBrowserTab}
+                </button>
                 <button type="button" className={menuItemCls} onClick={() => { openTerminal(); closeMenus(); }}>
                   <SquareTerminal className="w-3.5 h-3.5" strokeWidth={1.5} />
                   {t.workspace.newTerminalTab}

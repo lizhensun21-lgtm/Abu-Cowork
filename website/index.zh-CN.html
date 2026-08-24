@@ -35,6 +35,7 @@
                 <a href="#screenshots" class="nav-link">预览</a>
                 <a href="#use-cases" class="nav-link">场景</a>
                 <a href="#tech" class="nav-link">架构</a>
+                <a href="enterprise.zh-CN.html" class="nav-link nav-link-hot" aria-label="企业版，热门">企业版<span class="nav-hot-flame" aria-hidden="true">🔥</span></a>
                 <a href="docs.zh-CN.html" class="nav-link">文档</a>
                 <a href="#social" class="nav-link">社区</a>
                 <a href="index.html" class="nav-lang" aria-label="Switch to English" onclick="try{localStorage.setItem('abu-lang','en')}catch(e){}">
@@ -46,7 +47,7 @@
                     GitHub
                 </a>
             </div>
-            <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
+            <button class="nav-toggle" id="navToggle" aria-label="打开导航菜单" aria-controls="navLinks" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
         </div>
@@ -68,21 +69,21 @@
                         <svg class="dl-chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
                     <div class="dl-menu" id="dlMenu" hidden>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlMacSilicon" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlMacSilicon" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">macOS Apple Silicon</span>
                                 <span class="dl-menu-sub">dmg · M 系列芯片</span>
                             </div>
                         </a>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlMacIntel" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlMacIntel" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">macOS Intel</span>
                                 <span class="dl-menu-sub">dmg · x86_64</span>
                             </div>
                         </a>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlWindows" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlWindows" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">Windows</span>
@@ -90,8 +91,7 @@
                             </div>
                         </a>
                         <div class="dl-menu-footer">
-                            <span id="dlVersion"></span>
-                            <a href="https://github.com/PM-Shawn/Abu-Cowork/releases" target="_blank" rel="noopener">所有版本</a>
+                            <a href="docs.zh-CN.html#installation">安装帮助</a>
                         </div>
                     </div>
                 </div>
@@ -120,7 +120,7 @@
         </div>
     </section>
 
-    <!-- 最新更新（内容来自 latest.json，加载到才显示） -->
+    <!-- 最新更新（内容来自 Electron 发布元数据，加载到才显示） -->
     <section class="whatsnew" id="whatsnew" hidden>
         <div class="container">
             <details>
@@ -148,29 +148,29 @@
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                     </div>
-                    <h3>Agent 自主执行</h3>
+                    <h3>自主任务执行</h3>
                     <p>自主规划任务、调用工具、读写文件、执行命令，完成复杂工作流。</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
                     </div>
-                    <h3>Skill 技能系统</h3>
-                    <p>内置 29 个技能，覆盖 Office 文档、设计创作、浏览器自动化、开发辅助等场景，一键安装，支持自定义扩展。</p>
+                    <h3>技能系统</h3>
+                    <p>覆盖 Office 文档、设计创作、浏览器自动化、开发辅助等场景，支持安装、自定义和持续沉淀。</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
                     </div>
-                    <h3>MCP 工具协议</h3>
-                    <p>通过 Model Context Protocol 连接数据库、搜索引擎、GitHub 等外部服务。</p>
+                    <h3>连接器</h3>
+                    <p>通过 MCP 标准连接数据库、搜索引擎、GitHub 等外部服务，在工具箱统一管理。</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                     </div>
-                    <h3>触发器 / 值班</h3>
-                    <p>HTTP、文件变更、Cron、IM 消息等事件自动触发，实现 7×24 无人值守。</p>
+                    <h3>自动化</h3>
+                    <p>用定时任务和监听事件响应 HTTP、文件变化、时间或 IM 消息；Abu 运行且电脑唤醒时执行。</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -197,8 +197,8 @@
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     </div>
-                    <h3>多 Agent 并行</h3>
-                    <p>最多 5 个后台 Agent 同时干活，各自独立执行任务，进度实时可见，复杂工作并行推进。</p>
+                    <h3>多代理协作</h3>
+                    <p>主代理可以把边界清楚的子任务交给其他代理，独立推进并汇总结果。</p>
                 </div>
                 <div class="more-caps">
                     <span class="more-caps-label">更多能力</span>
@@ -207,7 +207,7 @@
                         <span class="more-cap">实验室 · 桌宠</span>
                         <span class="more-cap">IM 频道集成</span>
                         <span class="more-cap">多模型支持</span>
-                        <span class="more-cap">Projects 管理</span>
+                        <span class="more-cap">项目管理</span>
                         <span class="more-cap">对话分享</span>
                         <span class="more-cap">智能通知</span>
                         <span class="more-cap">性格系统 Soul</span>
@@ -251,7 +251,7 @@
                     <div class="showcase">
                         <div class="showcase-list">
                             <button class="showcase-item active" data-img="assets/screenshot-im-chat.png" data-cap="在飞书 / 钉钉中 @阿布 即可交互">IM 频道对话</button>
-                            <button class="showcase-item" data-img="assets/screenshot-skills.png" data-cap="内置 29 个技能，支持自定义扩展">Skill 技能</button>
+                            <button class="showcase-item" data-img="assets/screenshot-skills.png" data-cap="技能支持安装、自定义和持续沉淀">技能</button>
                             <button class="showcase-item" data-img="assets/screenshot-mcp.png" data-cap="一键接入 Playwright、GitHub 等外部工具">MCP 连接器</button>
                         </div>
                         <div class="showcase-view">
@@ -263,14 +263,14 @@
                 <div class="screenshot-panel" data-panel="automation">
                     <div class="showcase">
                         <div class="showcase-list">
-                            <button class="showcase-item active" data-img="assets/screenshot-multi-agent.png" data-cap="最多 5 个后台 Agent 同时干活，进度实时可见">多 Agent 并行</button>
+                            <button class="showcase-item active" data-img="assets/screenshot-multi-agent.png" data-cap="主代理分派子任务，进度与结果集中可见">多代理协作</button>
                             <button class="showcase-item" data-img="assets/screenshot-schedule-create.png" data-cap="Cron 定时执行，让阿布每天自动工作">定时任务</button>
                             <button class="showcase-item" data-img="assets/screenshot-triggers.png" data-cap="HTTP、文件变更、IM 消息等事件自动触发">触发器 / 值班</button>
                             <button class="showcase-item" data-img="assets/screenshot-memory.png" data-cap="记住你的偏好和工作习惯">个人记忆</button>
                         </div>
                         <div class="showcase-view">
                             <img class="showcase-img" src="assets/screenshot-multi-agent.png" alt="多 Agent 并行" loading="lazy">
-                            <p class="showcase-caption">多 Agent 并行 · 最多 5 个后台 Agent 同时干活，进度实时可见</p>
+                            <p class="showcase-caption">多代理协作 · 主代理分派子任务，进度与结果集中可见</p>
                         </div>
                     </div>
                 </div>
@@ -281,7 +281,7 @@
                             <button class="showcase-item" data-img="assets/screenshot-theme.png" data-cap="亮色 / 暗色 / 跟随系统一键切换">主题切换</button>
                             <button class="showcase-item" data-img="assets/screenshot-labs.png" data-cap="打磨中的新功能，按需开启（当前：桌宠）">实验室（Labs）</button>
                             <button class="showcase-item" data-img="assets/screenshot-soul.png" data-cap="三档主动度预设 + SOUL.md 自定义语气与回复风格">性格系统（Soul）</button>
-                            <button class="showcase-item" data-img="assets/screenshot-diagnostic.png" data-cap="AI 服务 / MCP / 技能 / 网络一键自检 + 诊断包导出">诊断面板</button>
+                            <button class="showcase-item" data-img="assets/screenshot-diagnostic.png" data-cap="模型 / 连接器 / 技能 / 网络一键自检 + 诊断包导出">诊断面板</button>
                             <button class="showcase-item" data-img="assets/screenshot-security-scan.png" data-cap="120+ 类风险拦截，三档权限模式按场景调节">内容安全扫描</button>
                         </div>
                         <div class="showcase-view">
@@ -361,7 +361,7 @@
                 <div class="tech-card">
                     <div class="tech-label">桌面框架</div>
                     <div class="tech-value">Electron</div>
-                    <div class="tech-detail">Rust 后端，原生性能，安全沙箱</div>
+                    <div class="tech-detail">Electron 主进程 + 原生组件，兼顾桌面集成与安全边界</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">前端</div>
@@ -370,13 +370,13 @@
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">AI 集成</div>
-                    <div class="tech-value">多模型 Agent</div>
-                    <div class="tech-detail">Tool Calling + MCP 协议 + Skill 系统</div>
+                    <div class="tech-value">多模型任务执行</div>
+                    <div class="tech-detail">工具调用 + 技能 + 连接器</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">安全</div>
                     <div class="tech-value">沙箱隔离</div>
-                    <div class="tech-detail">Seatbelt 沙箱 + 路径保护 + 命令检查</div>
+                    <div class="tech-detail">系统沙箱 + 路径保护 + 命令检查</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">数据</div>
@@ -385,8 +385,8 @@
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">扩展</div>
-                    <div class="tech-value">插件化架构</div>
-                    <div class="tech-detail">Skills + Subagents + MCP 按需扩展</div>
+                    <div class="tech-value">可扩展工具箱</div>
+                    <div class="tech-detail">技能 + 代理 + 连接器按需扩展</div>
                 </div>
             </div>
         </div>
@@ -401,7 +401,7 @@
                 <div class="step">
                     <div class="step-number">1</div>
                     <h3>下载安装</h3>
-                    <p>从 GitHub Releases 下载对应平台的安装包</p>
+                    <p>点击本页顶部的下载按钮，选择对应平台的安装包</p>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
@@ -410,8 +410,8 @@
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
-                    <h3>开始对话</h3>
-                    <p>回到主界面，用自然语言告诉阿布你的需求</p>
+                    <h3>开始任务</h3>
+                    <p>选择工作区，用自然语言告诉阿布目标、约束和交付物</p>
                 </div>
             </div>
         </div>
@@ -489,6 +489,7 @@
                 <div class="footer-links">
                     <a href="https://github.com/PM-Shawn/Abu-Cowork" target="_blank" rel="noopener">GitHub</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/releases" target="_blank" rel="noopener">Releases</a>
+                    <a href="enterprise.zh-CN.html">企业版</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/issues" target="_blank" rel="noopener">Issues</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
                 </div>
@@ -498,12 +499,16 @@
     </footer>
 
     <script>
-        // Dynamic download links from OSS latest.json → GitHub API fallback
+        // Resolve release metadata on the homepage; installer downloads always use the official OSS host.
         (function () {
-            const OSS_LATEST = 'https://abu-agent.oss-cn-beijing.aliyuncs.com/latest.json';
-            const OSS_BASE   = 'https://abu-agent.oss-cn-beijing.aliyuncs.com';
-            const GH_API     = 'https://api.github.com/repos/PM-Shawn/Abu-Cowork/releases/latest';
-            const GH_LATEST  = 'https://github.com/PM-Shawn/Abu-Cowork/releases/latest';
+            const OSS_BASE = 'https://abu-agent.oss-cn-beijing.aliyuncs.com';
+            const RELEASE_METADATA = `${OSS_BASE}/electron/latest-release.json`;
+            const downloadLinks = ['dlMacSilicon', 'dlMacIntel', 'dlWindows']
+                .map(id => document.getElementById(id));
+
+            downloadLinks.forEach(link => link.addEventListener('click', event => {
+                if (link.dataset.ready !== 'true') event.preventDefault();
+            }));
 
             function detectPlatform() {
                 const ua = navigator.userAgent;
@@ -512,10 +517,14 @@
                 return 'other';
             }
 
-            function applyLinks(tag, urls) {
+            function applyLinks(urls) {
                 document.getElementById('dlMacSilicon').href = urls.macSilicon;
                 document.getElementById('dlMacIntel').href   = urls.macIntel;
                 document.getElementById('dlWindows').href    = urls.windows;
+                downloadLinks.forEach(link => {
+                    link.dataset.ready = 'true';
+                    link.removeAttribute('aria-disabled');
+                });
 
                 const platform = detectPlatform();
 
@@ -523,41 +532,23 @@
                 if (dlCommunity) {
                     dlCommunity.href = platform === 'windows' ? urls.windows : urls.macSilicon;
                 }
-
-                const versionEl = document.getElementById('dlVersion');
-                if (versionEl) versionEl.textContent = tag;
             }
 
-            function applyFromOSS(tag) {
-                const ver = tag.replace(/^v/, '');
-                const gh  = `https://github.com/PM-Shawn/Abu-Cowork/releases/download/${tag}`;
-                applyLinks(tag, {
-                    macSilicon: `${gh}/Abu_${ver}_aarch64.dmg`,
-                    macIntel:   `${gh}/Abu_${ver}_x64.dmg`,
-                    windows:    `${OSS_BASE}/releases/${tag}/Abu_${ver}_x64-setup.exe`,
-                });
-            }
-
-            function applyFromGitHub(release) {
-                const tag    = release.tag_name;
-                const assets = release.assets || [];
-                // Binaries are on OSS, not GitHub — if assets empty, fall back to OSS pattern
-                if (!assets.length) {
-                    applyFromOSS(tag);
-                    return;
+            function trustedDownloadUrl(value, extension, version) {
+                const url = new URL(value);
+                const releasePath = `/releases/${version}/`;
+                if (url.origin !== OSS_BASE || !url.pathname.startsWith(releasePath) || !url.pathname.toLowerCase().endsWith(extension)) {
+                    throw new Error('Untrusted installer URL');
                 }
-                const find = (re) => {
-                    const a = assets.find(a => re.test(a.name));
-                    return a ? a.browser_download_url : GH_LATEST;
-                };
-                applyLinks(tag, {
-                    macSilicon: find(/aarch64.*\.dmg$/i),
-                    macIntel:   find(/x64.*\.dmg$/i),
-                    windows:    find(/setup\.exe$/i),
-                });
+                return url.href;
             }
 
-            // ── Localized release notes (What's new), rendered from latest.json ──
+            function markDownloadUnavailable() {
+                const label = document.getElementById('dlPrimaryLabel');
+                if (label) label.textContent = '暂时无法下载';
+            }
+
+            // ── Localized release notes (What's new) ──
             function escapeHtml(s) {
                 return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
             }
@@ -583,33 +574,44 @@
                 if (inList) html += '</ul>';
                 return html;
             }
+            // Paint the "What's new" panel from a version label + Markdown body.
+            function paintNotes(version, notes) {
+                notes = (notes || '').trim();
+                const sec = document.getElementById('whatsnew');
+                const body = document.getElementById('wnBody');
+                const ver = document.getElementById('wnVersion');
+                // Skip the "See {github-url}" fallback stub — nothing useful to render.
+                if (!sec || !body || !notes || /^see\s+https?:\/\//i.test(notes)) return;
+                body.innerHTML = renderMarkdown(notes);
+                if (ver && version) ver.textContent = version;
+                sec.hidden = false;
+            }
+
             function renderNotes(data) {
                 try {
-                    const raw = (document.documentElement.lang || 'en').toLowerCase();
-                    const key = raw.indexOf('zh') === 0 ? 'zh-CN' : 'en-US';
                     const i18n = data.notes_i18n || {};
-                    const notes = (i18n[key] || i18n['en-US'] || data.notes || '').trim();
-                    const sec = document.getElementById('whatsnew');
-                    const body = document.getElementById('wnBody');
-                    const ver = document.getElementById('wnVersion');
-                    // Skip the "See {github-url}" fallback stub — nothing useful to render.
-                    if (!sec || !body || !notes || /^see\s+https?:\/\//i.test(notes)) return;
-                    body.innerHTML = renderMarkdown(notes);
-                    if (ver && data.version) ver.textContent = data.version;
-                    sec.hidden = false;
+                    const key = (document.documentElement.lang || 'en').toLowerCase().indexOf('zh') === 0 ? 'zh-CN' : 'en-US';
+                    paintNotes(data.version, i18n[key] || '');
                 } catch (e) { /* leave the section hidden on any error */ }
             }
 
-            // Try OSS first, fall back to GitHub API
-            fetch(OSS_LATEST, { cache: 'no-cache' })
+            function applyMetadata(data) {
+                if (data.schema_version !== 1 || !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(data.version || '')) {
+                    throw new Error('Invalid release metadata');
+                }
+                const downloads = data.downloads || {};
+                applyLinks({
+                    macSilicon: trustedDownloadUrl(downloads['mac-arm64']?.url, '.dmg', data.version),
+                    macIntel: trustedDownloadUrl(downloads['mac-x64']?.url, '.dmg', data.version),
+                    windows: trustedDownloadUrl(downloads['windows-x64']?.url, '.exe', data.version),
+                });
+                renderNotes(data);
+            }
+
+            fetch(RELEASE_METADATA, { cache: 'no-cache' })
                 .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-                .then(d => { applyFromOSS(d.version); renderNotes(d); })
-                .catch(() =>
-                    fetch(GH_API)
-                        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-                        .then(d => applyFromGitHub(d))
-                        .catch(() => { /* both failed, links stay on GH_LATEST page */ })
-                );
+                .then(applyMetadata)
+                .catch(markDownloadUnavailable);
 
             // Dropdown toggle
             const chevron = document.getElementById('dlChevron');
@@ -647,17 +649,28 @@
         // Mobile nav toggle
         const navToggle = document.getElementById('navToggle');
         const navLinks = document.getElementById('navLinks');
+        const closeNavigation = () => {
+            navLinks.classList.remove('open');
+            navToggle.classList.remove('open');
+            navToggle.setAttribute('aria-expanded', 'false');
+            navToggle.setAttribute('aria-label', '打开导航菜单');
+        };
         navToggle.addEventListener('click', () => {
-            navLinks.classList.toggle('open');
-            navToggle.classList.toggle('open');
+            const isOpen = navLinks.classList.toggle('open');
+            navToggle.classList.toggle('open', isOpen);
+            navToggle.setAttribute('aria-expanded', String(isOpen));
+            navToggle.setAttribute('aria-label', isOpen ? '关闭导航菜单' : '打开导航菜单');
         });
 
         // Close mobile nav on link click
         navLinks.querySelectorAll('.nav-link').forEach(link => {
-            link.addEventListener('click', () => {
-                navLinks.classList.remove('open');
-                navToggle.classList.remove('open');
-            });
+            link.addEventListener('click', closeNavigation);
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && navLinks.classList.contains('open')) {
+                closeNavigation();
+                navToggle.focus();
+            }
         });
 
         // Screenshot tabs

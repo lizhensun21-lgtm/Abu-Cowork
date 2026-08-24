@@ -17,6 +17,7 @@
   --timeline-scroll-track: rgb(17 24 39 / 0.035);
   --timeline-scroll-thumb: #a6acb4;
   --timeline-scroll-thumb-hover: #8f969f;
+  --timeline-toolbar-control-gap: 4px;
   --milestone-status-not-started-fill: transparent;
   --milestone-status-not-started-border: #aeb3bc;
   --milestone-status-not-started-label: #62666d;
@@ -120,10 +121,17 @@
 [data-project-overview-workspace] .timeline-toolbar__view-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--timeline-toolbar-control-gap);
 }
 
 [data-project-overview-workspace] .timeline-toolbar__right {
+  flex: 0 0 auto;
+}
+
+[data-project-overview-workspace] .timeline-toolbar__icon-group,
+[data-project-overview-workspace] .timeline-toolbar__view-group,
+[data-project-overview-workspace] .timeline-zoom-control-group,
+[data-project-overview-workspace] .scale-menu-wrap {
   flex: 0 0 auto;
 }
 
@@ -183,7 +191,10 @@
   position: relative;
   display: inline-flex;
   width: 30px;
+  min-width: 30px;
   height: 30px;
+  box-sizing: border-box;
+  flex: 0 0 30px;
   align-items: center;
   justify-content: center;
   border: 1px solid rgb(17 24 39 / 0.09);
@@ -202,6 +213,7 @@
 
 [data-project-overview-workspace] .timeline-zoom-control-group {
   display: inline-flex;
+  box-sizing: border-box;
   align-items: center;
   overflow: hidden;
   border: 1px solid rgb(17 24 39 / 0.09);
@@ -211,7 +223,10 @@
 
 [data-project-overview-workspace] .timeline-toolbar .timeline-zoom-control-group .timeline-zoom-button {
   width: 28px;
+  min-width: 28px;
   height: 28px;
+  box-sizing: border-box;
+  flex: 0 0 28px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -240,6 +255,8 @@
 [data-project-overview-workspace] .scale-button {
   display: inline-flex;
   height: 30px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 0 8px;
@@ -252,6 +269,11 @@
 
 [data-project-overview-workspace] .scale-button {
   min-width: 60px;
+}
+
+[data-project-overview-workspace] .timeline-toolbar .icon-button > svg,
+[data-project-overview-workspace] .scale-button > svg {
+  flex: 0 0 auto;
 }
 
 [data-project-overview-workspace] .scale-button.is-open {

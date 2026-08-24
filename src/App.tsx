@@ -5,6 +5,8 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnv } from '@/utils/tauriEnv';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { traceErrorBoundaryCatch } from '@/core/observability/runtimeTrace';
+import { subscribeShellCrashReports } from '@/core/observability/shellCrashReports';
 import Sidebar from '@/components/sidebar/Sidebar';
 import ChatView from '@/components/chat/ChatView';
 import AutomationView from '@/components/automation/AutomationView';
@@ -90,7 +92,7 @@ import { useI18n } from '@/i18n';
 import CloseDialog from '@/components/common/CloseDialog';
 import SensitiveAuditDialog from '@/components/settings/SensitiveAuditDialog';
 import { checkForUpdate } from '@/core/updates/checker';
-import { sendConsolePing } from '@/utils/consolePing';
+import { usePingCadence } from '@/hooks/usePingCadence';
 import { fetchUnseenAnnouncements, markSeen, type AnnouncementItem } from '@/utils/consoleAnnouncement';
 import AnnouncementBanner from '@/components/common/AnnouncementBanner';
 import DisclaimerBanner from '@/components/common/DisclaimerBanner';
@@ -102,6 +104,12 @@ import '@/core/enterprise/policy/enforcer';  // enforcer.ts — non-JSX, side-ef
 import PolicyConfirmModal from '@/components/enterprise/PolicyConfirmModal';
 import BindToEnterpriseFlow from '@/components/enterprise/BindToEnterpriseFlow';
 import { useDeepLinkEnroll } from '@/core/enterprise/useDeepLinkEnroll';
+import {
+  consumeComputerUseResumeToken,
+  resumeTokenMatchesTask,
+} from '@/core/capabilityPlugins/computerUseResume';
+import { restoreComputerUseSetupRequest } from '@/core/capabilityPlugins/setupBridge';
+import { checkComputerUsePermissions } from '@/core/agent/computerUsePermission';
 
 /**
  * Drain Notice inbox if we're in a state that can actually deliver.
@@ -126,6 +134,15 @@ async function drainPendingInbox(abuIsFocused = false): Promise<void> {
   } catch (err) {
     console.warn('[App] Notice inbox drain error:', err);
   }
+}
+
+/**
+ * A render crash that reaches the app-root boundary blanks the whole UI, so it
+ * gets a runtime-log record. Local only — see traceErrorBoundaryCatch.
+ * Module scope keeps the prop reference stable across renders.
+ */
+function traceAppRootRenderError(error: Error): void {
+  traceErrorBoundaryCatch('app_root', error);
 }
 
 function App() {
@@ -154,6 +171,50 @@ function App() {
   const showTodosInbox = useLabsFlag(LABS_TODOS_INBOX);
   const activeConv = useActiveConversation();
   const { t } = useI18n();
+  usePingCadence();
+
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      await platformInitialization;
+      const token = consumeComputerUseResumeToken();
+      if (!token || cancelled) return;
+      const chat = useChatStore.getState();
+      if (!(token.conversationId in chat.conversationIndex)) {
+        const conversationStorage = await import('@/core/session/conversationStorage');
+        await conversationStorage.initConversationStorage();
+        const meta = conversationStorage.getIndexEntries()[token.conversationId];
+        if (!meta || cancelled) return;
+        useChatStore.setState((state) => ({
+          conversationIndex: { ...state.conversationIndex, [token.conversationId]: meta },
+        }));
+      }
+      const permissions = await checkComputerUsePermissions();
+      if (!permissions || cancelled) return;
+      await chat.switchConversation(token.conversationId);
+      if (cancelled) return;
+      const conversation = useChatStore.getState().conversations[token.conversationId];
+      if (!conversation || !await resumeTokenMatchesTask(token, conversation.messages)) return;
+      useSettingsStore.getState().setViewMode('chat');
+      restoreComputerUseSetupRequest({
+        conversationId: token.conversationId,
+        taskSummaryHash: token.taskSummaryHash,
+        requirements: token.requirements,
+      });
+    };
+    const run = () => void restore();
+    if (useChatStore.persist.hasHydrated()) run();
+    else {
+      const unsubscribe = useChatStore.persist.onFinishHydration(run);
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -208,7 +269,11 @@ function App() {
   // overlay would just double it up. Show the overlay only while the panel is collapsed
   // (and there's a conversation to show a panel for).
   const showRightPanelToggle = viewMode === 'chat' && ((activeConv?.messages?.length ?? 0) > 0 || hasAnyTab) && rightPanelCollapsed;
-  const [showCloseDialog, setShowCloseDialog] = useState(false);
+  // Lives in previewStore (not local state) so BrowserTab can hide the native
+  // browser webview while the dialog is up — otherwise the webview paints over
+  // it and the user cannot see or click the close confirmation.
+  const showCloseDialog = usePreviewStore((s) => s.appModalOpen);
+  const setShowCloseDialog = usePreviewStore((s) => s.setAppModalOpen);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [pendingAnnouncements, setPendingAnnouncements] = useState<AnnouncementItem[]>([]);
   const { pendingEnroll, dismissEnroll } = useDeepLinkEnroll();
@@ -219,12 +284,12 @@ function App() {
   const handleQuit = useCallback(() => {
     setShowCloseDialog(false);
     invoke('app_exit');
-  }, []);
+  }, [setShowCloseDialog]);
 
   const handleMinimize = useCallback(() => {
     setShowCloseDialog(false);
     invoke('window_hide');
-  }, []);
+  }, [setShowCloseDialog]);
 
   // Keep notification focus state aligned through both the native Tauri event
   // and the renderer's own focus event. Electron can miss one during startup
@@ -323,6 +388,25 @@ function App() {
     };
   }, []);
 
+  // Severe shell crashes (main-process exception, renderer death) are recorded
+  // locally by the main process; the renderer owns the telemetry opt-out, so it
+  // is the tier that decides whether they may also be reported remotely.
+  useEffect(() => {
+    if (!isTauriEnv()) return; // web / E2E: no Tauri IPC
+    let unlistenFn: (() => void) | null = null;
+    let cancelled = false;
+    subscribeShellCrashReports().then((fn) => {
+      if (cancelled) fn();
+      else unlistenFn = fn;
+    }).catch(() => {
+      // Observability is best-effort and must never block app startup.
+    });
+    return () => {
+      cancelled = true;
+      unlistenFn?.();
+    };
+  }, []);
+
   // Listen for window close-requested event from Rust
   useEffect(() => {
     if (!isTauriEnv()) return; // web / E2E: no Tauri IPC
@@ -345,7 +429,7 @@ function App() {
       cancelled = true;
       unlistenFn?.();
     };
-  }, []);
+  }, [setShowCloseDialog]);
 
   useEffect(() => {
     registerBuiltinTools();
@@ -354,7 +438,6 @@ function App() {
     provisionFirstPartyMCPServers();
     initMCPStoreSync();
     initBuiltinBrowserRuntime();
-    sendConsolePing();
 
     // Hydrate API keys from the encrypted secret store. During Phase 2 the
     // plaintext apiKey is still persisted via localStorage as a fallback,
@@ -462,8 +545,27 @@ function App() {
       triggerEngine.start();
       imChannelRouter.start();
       reconcileIMSessions();
-      // Migrate old memory systems (entries.json / memory.md) to memdir (.md files)
-      import('@/core/memdir/migrate').then(m => m.migrateMemdirIfNeeded()).catch(() => {});
+      // Migrate old memory systems (entries.json / memory.md) to memdir (.md files),
+      // then run the one-shot secret sweep over existing memories — global dir,
+      // current workspace dir, and every workspace opened later (marker-gated
+      // per directory, so repeat calls cost one exists() check; new writes are
+      // sanitized at the writeMemory funnel). Fire-and-forget: a turn sent in
+      // the first seconds after launch may still see pre-sweep bytes — accepted
+      // one-shot race; blocking startup on the sweep would be worse.
+      import('@/core/memdir/migrate').then(m => m.migrateMemdirIfNeeded())
+        .then(async () => {
+          const { sweepMemorySecrets } = await import('@/core/memdir/secretSweep');
+          const { useWorkspaceStore } = await import('@/stores/workspaceStore');
+          await sweepMemorySecrets(null);
+          const current = useWorkspaceStore.getState().currentPath;
+          if (current) await sweepMemorySecrets(current);
+          useWorkspaceStore.subscribe((state, prev) => {
+            if (state.currentPath && state.currentPath !== prev.currentPath) {
+              void sweepMemorySecrets(state.currentPath);
+            }
+          });
+        })
+        .catch(() => {});
       // Initialize conversation storage before checking crash checkpoints.
       // Otherwise the checkpoint scan can beat the async Zustand index
       // rehydrate, mistake a valid conversation for a missing one, and delete
@@ -623,12 +725,8 @@ function App() {
       await useEnterpriseStore.getState().init().catch(e => console.warn('[enterprise] init failed', e))
       if (cancel) return
       if (useEnterpriseStore.getState().mode.kind !== 'personal') {
-        // Protocol layer: heartbeat stays in Abu-opensource (refreshes config / policies)
-        const { startHeartbeat } = await import('@/core/enterprise/heartbeat')
-        startHeartbeat()
-        // Business modules: routed through Vite alias (stub in OSS, real impl in Enterprise build)
-        const { initEnterpriseModules } = await import('@enterprise-modules')
-        await initEnterpriseModules()
+        const { activateEnterpriseRuntime } = await import('@/core/enterprise/runtime')
+        await activateEnterpriseRuntime()
       }
     })()
     return () => { cancel = true }
@@ -656,9 +754,11 @@ function App() {
     getCurrentWindow().setTitle(desktopPlatform === 'macos' ? '' : 'Abu');
   }, [desktopPlatform]);
 
-  // macOS keeps its compact controls in a fixed overlay. Windows keeps the
-  // native frame/menu and reserves a renderer toolbar for business actions.
+  // macOS keeps its compact controls in a fixed overlay. Electron Windows uses
+  // the native caption row plus controls embedded into the workspace headers.
   const mac = desktopPlatform === 'macos';
+  const windowsWorkspaceHeader =
+    desktopPlatform === 'windows' && hasElectronCommandHost();
 
   // Preview split is active only when a preview is open in the chat view AND the
   // right panel is showing — then the chat holds a stable width and preview flex-fills.
@@ -676,7 +776,7 @@ function App() {
 
   const windowTitleBarProps = {
     platform: desktopPlatform,
-    windowsTitleBarOverlay: desktopPlatform === 'windows' && hasElectronCommandHost(),
+    windowsTitleBarOverlay: windowsWorkspaceHeader,
     sidebarCollapsed,
     showSidebarToggle: !projectManagementPortalActive,
     showProjectManagementPortal: !projectManagementPortalActive,
@@ -713,13 +813,21 @@ function App() {
   };
 
   return (
-    <ErrorBoundary>
+    <ErrorBoundary onError={traceAppRootRenderError}>
     <TooltipProvider delayDuration={200}>
       <div
         data-abu-app-shell
         className="relative flex h-full w-full flex-col overflow-hidden bg-[var(--abu-bg-canvas)]"
       >
-        <WindowTitleBar {...windowTitleBarProps} />
+        {/* Chromium builds the OS drag region by walking the layout tree in
+            DOCUMENT order, unioning `drag` rects and subtracting `no-drag`
+            ones — stacking order does not decide the winner, the LAST writer
+            does. macOS renders its chrome as `fixed` overlays, so the controls
+            must come after the cards or a card's own drag row (see
+            `windowDragRowProps`) unions straight back over them and the
+            buttons stop responding. Windows/Linux keep their chrome rows in
+            normal flow, where moving them would move them visually. */}
+        {!mac && <WindowTitleBar {...windowTitleBarProps} />}
 
         <div
           data-abu-app-layout
@@ -737,7 +845,7 @@ function App() {
                 }}
               >
                 <div className="min-h-0 flex-1">
-                  <Sidebar />
+                  <Sidebar windowsWorkspaceHeader={windowsWorkspaceHeader} />
                 </div>
               </div>
 
@@ -764,7 +872,12 @@ function App() {
                     {viewMode === 'toolbox' && <ToolboxView />}
                     {viewMode === 'todos' && <TodoView />}
                     {viewMode === 'inbox' && <InboxView />}
-                    {(viewMode === 'chat' || !viewMode) && <ChatView />}
+                    {(viewMode === 'chat' || !viewMode) && (
+                      <ChatView
+                        windowsWorkspaceHeader={windowsWorkspaceHeader}
+                        rightPanelToggleVisible={showRightPanelToggle}
+                      />
+                    )}
                   </main>
 
                   {/* Right panel */}
@@ -774,6 +887,8 @@ function App() {
             </>
           )}
         </div>
+
+        {mac && <WindowTitleBar {...windowTitleBarProps} />}
 
         <ToastContainer />
 

@@ -1,8 +1,8 @@
 <div align="center">
 
-[English](README.md) | **中文**
+<img src="website/assets/readme-cover.zh-CN.jpg" alt="Abu — 你的 AI 桌面办公搭子" width="100%" />
 
-<img src="website/assets/abu-avatar.png" width="120" height="120" style="border-radius: 24px" />
+[English](README.md) | **中文**
 
 # Abu (阿布)
 
@@ -17,6 +17,8 @@
 [下载安装](#下载安装) · [快速开始](#快速开始) · [功能介绍](#功能介绍) · [使用指南](docs/User-Guide.zh-CN.md) · [从源码构建](#从源码构建)
 
 </div>
+
+> 🚧 **多 Harness 改造进行中**：Abu 正在演进为可插拔的 Agent Runtime，并把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 作为首批适配目标。当前稳定版仍使用 Abu 原生 Harness。
 
 ---
 
@@ -288,16 +290,22 @@
 git clone https://github.com/PM-Shawn/Abu-Cowork.git
 cd Abu-Cowork
 
-# 安装锁定依赖并准备 worktree 内独立的 Electron 运行环境
-npm ci
+# 准备 worktree 内独立的依赖、Electron/浏览器运行时、Sidecar、
+# 原生辅助程序、沙箱启动器和 OSS 前端
 npm run setup:electron-dev
 
-# 启动 Electron 桌面应用（dev 数据与正式安装的 Abu 隔离）
+# 启动 Electron 桌面应用；启动前会重新构建 OSS 前端
 npm run electron:dev
 
-# 仅启动前端（不需要 Rust）
+# 企业版 worktree：准备并启动包含私有模块的企业版前端
+npm run setup:electron-dev:enterprise
+npm run electron:dev:enterprise
+
+# 仅启动前端预览（不能作为桌面端验收）
 npm run dev
 ```
+
+Tauri 不再用于新功能开发和验收；相关源码仅为已发布版本兼容、数据迁移和回退保留。
 
 ### 构建
 

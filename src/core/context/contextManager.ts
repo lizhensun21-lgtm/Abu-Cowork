@@ -3,10 +3,11 @@
  *
  * Strategy:
  * 1. Always keep system prompt
- * 2. Always keep first user message (task context)
- * 3. Keep last 4 complete conversation rounds
+ * 2. Keep the first user message while the normal compression tiers still fit
+ * 3. Keep the most recent complete conversation rounds
  * 4. Older messages: keep user messages, compress assistant to summary
- * 5. If still over limit, drop middle messages keeping first + last
+ * 5. Enforce a final hard invariant, preferring the latest user instruction
+ *    when only one message can fit safely
  */
 
 import type { Message, ToolCallForContext, ToolResultContent } from '../../types';
@@ -17,6 +18,51 @@ import { createLogger } from '../logging/logger';
 const logger = createLogger('contextManager');
 
 const ASSISTANT_SUMMARY_MAX_CHARS = 200;
+const CONTEXT_SAFETY_MARGIN_RATIO = 0.02;
+const CONTEXT_SAFETY_MARGIN_MAX_TOKENS = 4096;
+const CONTEXT_TRUNCATION_MARKER = '[Content truncated to fit the context budget]';
+
+export type ContextBudgetStrategy =
+  | 'unchanged'
+  | 'compressed_middle'
+  | 'recent_rounds'
+  | 'last_two_rounds'
+  | 'last_round_compacted'
+  | 'latest_user_only';
+
+export interface ContextBudgetResult {
+  messages: Message[];
+  tokensBefore: number;
+  tokensAfter: number;
+  inputBudget: number;
+  safetyMarginTokens: number;
+  strategy: ContextBudgetStrategy;
+}
+
+export type ContextBudgetErrorCode =
+  | 'INPUT_TOO_LARGE'
+  | 'FIXED_CONTEXT_TOO_LARGE';
+
+export class ContextBudgetError extends Error {
+  readonly code: ContextBudgetErrorCode;
+  readonly estimatedTokens: number;
+  readonly inputBudget: number;
+
+  constructor(
+    code: ContextBudgetErrorCode,
+    estimatedTokens: number,
+    inputBudget: number,
+  ) {
+    const subject = code === 'INPUT_TOO_LARGE'
+      ? 'The latest user input'
+      : 'The system prompt and tool definitions';
+    super(`${code}: ${subject} requires an estimated ${estimatedTokens} input tokens, but the safe input budget is ${inputBudget}.`);
+    this.name = 'ContextBudgetError';
+    this.code = code;
+    this.estimatedTokens = estimatedTokens;
+    this.inputBudget = inputBudget;
+  }
+}
 
 /**
  * If the first round is older than this, treat it as stale and include it
@@ -38,6 +84,26 @@ function getMaxScreenshots(usagePercent?: number): number {
   if (usagePercent < 40) return 4;   // plenty of room
   if (usagePercent < 60) return 3;   // moderate
   return 2;                          // tight — aggressive trimming
+}
+
+/**
+ * Tell the model, in the text it actually receives, that this tool call's
+ * screenshots were dropped from history. Count comes from the recorded result,
+ * so the same history always renders the same string.
+ *
+ * Silent when the call had no images. The strip indices are derived from
+ * `msg.toolCalls` and reused against `msg.toolCallsForContext` at the same
+ * position, but the two are built by different producers — toolCalls follows the
+ * order the model requested, while toolCallsForContext is appended by
+ * eventRouter as each tool *finishes*, and tools run through Promise.allSettled.
+ * Nothing guarantees position j means the same call in both. That index sharing
+ * predates this note and is not addressed here; the guard just keeps a
+ * misalignment from putting "[0 screenshot(s) removed…]" in front of the model.
+ */
+function appendScreenshotRemovedNote(result: string | undefined, imageCount: number): string {
+  if (imageCount <= 0) return result ?? '';
+  const note = `[${imageCount} screenshot(s) removed from history to save context]`;
+  return result === undefined || result === '' ? note : `${result}\n\n${note}`;
 }
 
 /**
@@ -71,31 +137,43 @@ export function trimOldScreenshots(messages: Message[], usagePercent?: number): 
     const strippedTcIndices = toStrip.filter(loc => loc.msgIdx === i).map(loc => loc.tcIdx);
     if (strippedTcIndices.length === 0) return msg;
 
-    // Clone message and strip images from old tool calls
+    // Clone message and strip images from old tool calls.
+    //
+    // The note goes on `result`, NOT into resultContent. normalizeMessages
+    // builds the `tool` wire message from the `result` string and reads
+    // resultContent only through extractImages, so a text block placed there
+    // reaches nobody. That mattered here more than anywhere: computer-use
+    // results carry "Examine the screenshot to verify the action result" in
+    // their text, and that instruction survives untouched — so dropping the
+    // image without a reachable note left the model told to inspect a picture
+    // that was no longer in the request.
+    //
+    // Codex does the same thing structurally: its normalize pass swaps
+    // InputImage for InputText **in place**, inside the content items that ARE
+    // the wire, so the notice sits exactly where the picture was. (Where it
+    // instead drops a whole message group, as compaction does, no note is
+    // needed — nothing is left dangling.)
     const newToolCalls = msg.toolCalls!.map((tc, j) => {
       if (!strippedTcIndices.includes(j)) return tc;
-      // Replace image content with text placeholder, keep text parts
       const textParts = tc.resultContent?.filter((b: ToolResultContent) => b.type === 'text') || [];
       const imageCount = tc.resultContent?.filter((b: ToolResultContent) => b.type === 'image').length || 0;
       return {
         ...tc,
-        resultContent: [
-          ...textParts,
-          { type: 'text' as const, text: `[${imageCount} screenshot(s) removed from history to save context]` },
-        ],
+        result: appendScreenshotRemovedNote(tc.result, imageCount),
+        resultContent: textParts,
       };
     });
 
-    // Also strip from toolCallsForContext if present
+    // Also strip from toolCallsForContext if present — this is the canonical
+    // send representation when set, so it is the one that must carry the note.
     const newToolCallsForContext = msg.toolCallsForContext?.map((tc, j) => {
       if (!strippedTcIndices.includes(j)) return tc;
       const textParts = tc.resultContent?.filter((b: ToolResultContent) => b.type === 'text') || [];
+      const imageCount = tc.resultContent?.filter((b: ToolResultContent) => b.type === 'image').length || 0;
       return {
         ...tc,
-        resultContent: [
-          ...textParts,
-          { type: 'text' as const, text: `[screenshot removed from history]` },
-        ],
+        result: appendScreenshotRemovedNote(tc.result, imageCount),
+        resultContent: textParts,
       };
     });
 
@@ -175,6 +253,137 @@ function compressAssistantMessage(msg: Message): Message {
   };
 }
 
+function calculateSafetyMargin(rawInputBudget: number, contextWindowSize: number): number {
+  if (rawInputBudget <= 0) return 0;
+  return Math.min(
+    Math.floor(rawInputBudget * 0.05),
+    Math.max(1, Math.min(
+      CONTEXT_SAFETY_MARGIN_MAX_TOKENS,
+      Math.ceil(contextWindowSize * CONTEXT_SAFETY_MARGIN_RATIO),
+    )),
+  );
+}
+
+function truncateTextToChars(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 0) return CONTEXT_TRUNCATION_MARKER;
+  return `${text.slice(0, maxChars)}\n${CONTEXT_TRUNCATION_MARKER}`;
+}
+
+function compactHistoricalMessage(message: Message, maxCharsPerField: number): Message {
+  const content = typeof message.content === 'string'
+    ? truncateTextToChars(message.content, maxCharsPerField)
+    : [{
+        type: 'text' as const,
+        text: truncateTextToChars(getMessageText(message.content), maxCharsPerField),
+      }];
+
+  const compactInput = (input: Record<string, unknown>): Record<string, unknown> => (
+    JSON.stringify(input).length <= maxCharsPerField
+      ? input
+      : { _contextTruncated: true }
+  );
+  const compactResultContent = (contentBlocks: ToolResultContent[] | undefined): ToolResultContent[] | undefined => {
+    if (!contentBlocks) return undefined;
+    const text = contentBlocks
+      .filter((block): block is Extract<ToolResultContent, { type: 'text' }> => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
+    return [{ type: 'text', text: truncateTextToChars(text, maxCharsPerField) }];
+  };
+
+  return {
+    ...message,
+    content,
+    thinking: undefined,
+    toolCalls: message.toolCalls?.map((toolCall) => ({
+      ...toolCall,
+      input: compactInput(toolCall.input),
+      result: toolCall.result === undefined
+        ? undefined
+        : truncateTextToChars(toolCall.result, maxCharsPerField),
+      resultContent: compactResultContent(toolCall.resultContent),
+    })),
+    toolCallsForContext: message.toolCallsForContext?.map((toolCall) => ({
+      ...toolCall,
+      input: compactInput(toolCall.input),
+      result: truncateTextToChars(toolCall.result, maxCharsPerField),
+      resultContent: compactResultContent(toolCall.resultContent),
+    })),
+  };
+}
+
+function fitLastRoundToBudget(
+  messages: Message[],
+  fixedTokens: number,
+  inputBudget: number,
+): { messages: Message[]; strategy: ContextBudgetStrategy } {
+  const rounds = identifyRounds(messages);
+  const lastRound = rounds.at(-1) ?? [];
+  const latestUser = [...messages].reverse().find((message) => message.role === 'user');
+
+  if (!latestUser) {
+    return { messages: [], strategy: 'latest_user_only' };
+  }
+
+  const latestUserTokens = fixedTokens + estimateMessageTokens([latestUser]);
+  if (latestUserTokens > inputBudget) {
+    throw new ContextBudgetError('INPUT_TOO_LARGE', latestUserTokens, inputBudget);
+  }
+
+  const compactRound = (maxCharsPerField: number): Message[] => stripOldThinking(sanitizeToolPairs(
+    lastRound.map((message) => (
+      message === latestUser
+        ? message
+        : compactHistoricalMessage(message, maxCharsPerField)
+    )),
+  ));
+
+  const maxChars = lastRound.reduce((largest, message) => {
+    const candidates = [getMessageText(message.content).length, message.thinking?.length ?? 0];
+    for (const toolCall of message.toolCalls ?? []) {
+      candidates.push(
+        JSON.stringify(toolCall.input).length,
+        toolCall.result?.length ?? 0,
+        toolCall.resultContent
+          ?.filter((block) => block.type === 'text')
+          .reduce((total, block) => total + block.text.length, 0) ?? 0,
+      );
+    }
+    for (const toolCall of message.toolCallsForContext ?? []) {
+      candidates.push(
+        JSON.stringify(toolCall.input).length,
+        toolCall.result.length,
+        toolCall.resultContent
+          ?.filter((block) => block.type === 'text')
+          .reduce((total, block) => total + block.text.length, 0) ?? 0,
+      );
+    }
+    return Math.max(largest, ...candidates);
+  }, 0);
+
+  let low = 0;
+  let high = maxChars;
+  let best: Message[] | null = null;
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactRound(midpoint);
+    const candidateTokens = fixedTokens + estimateMessageTokens(candidate);
+    if (candidateTokens <= inputBudget) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  if (best) {
+    return { messages: best, strategy: 'last_round_compacted' };
+  }
+
+  return { messages: [latestUser], strategy: 'latest_user_only' };
+}
+
 /**
  * Prepare messages for LLM call, fitting within context window limit
  *
@@ -182,37 +391,93 @@ function compressAssistantMessage(msg: Message): Message {
  * @param systemPrompt The system prompt text
  * @param contextWindowSize Total context window size (tokens)
  * @param reserveForOutput Tokens to reserve for model output
- * @returns Trimmed messages array
+ * @returns Trimmed messages plus the measured safe-budget result
  */
-export function prepareContextMessages(
+export function enforceContextBudget(
   messages: Message[],
   systemPrompt: string,
   contextWindowSize: number,
   reserveForOutput: number,
   toolSchemaTokens?: number
-): Message[] {
-  const maxInputTokens = contextWindowSize - reserveForOutput;
+): ContextBudgetResult {
+  const rawInputBudget = contextWindowSize - reserveForOutput;
+  const safetyMarginTokens = calculateSafetyMargin(rawInputBudget, contextWindowSize);
+  const inputBudget = Math.max(0, rawInputBudget - safetyMarginTokens);
   const systemTokens = estimateTokens(systemPrompt);
+  const fixedTokens = systemTokens + (toolSchemaTokens ?? 0);
+
+  if (fixedTokens > inputBudget) {
+    throw new ContextBudgetError('FIXED_CONTEXT_TOO_LARGE', fixedTokens, inputBudget);
+  }
 
   // Fast path: everything fits
   const messageTokens = estimateMessageTokens(messages);
-  const totalTokens = systemTokens + messageTokens + (toolSchemaTokens ?? 0);
-  if (totalTokens <= maxInputTokens) {
-    return messages;
+  const totalTokens = fixedTokens + messageTokens;
+  if (totalTokens <= inputBudget) {
+    return {
+      messages,
+      tokensBefore: totalTokens,
+      tokensAfter: totalTokens,
+      inputBudget,
+      safetyMarginTokens,
+      strategy: 'unchanged',
+    };
   }
 
-  const usagePercent = Math.round((totalTokens / maxInputTokens) * 100);
+  const usagePercent = inputBudget > 0
+    ? Math.round((totalTokens / inputBudget) * 100)
+    : 100;
   logger.info('Hard truncation needed', {
     systemTokens,
     messageTokens,
     toolSchemaTokens: toolSchemaTokens ?? 0,
     totalTokens,
-    maxInputTokens,
+    inputBudget,
+    safetyMarginTokens,
     usagePercent,
   });
 
   const rounds = identifyRounds(messages);
-  if (rounds.length <= 1) return messages; // Can't compress further
+
+  const finalize = (
+    candidate: Message[],
+    strategy: ContextBudgetStrategy,
+  ): ContextBudgetResult => {
+    const sanitized = stripOldThinking(sanitizeToolPairs(candidate));
+    const candidateTokens = fixedTokens + estimateMessageTokens(sanitized);
+    if (candidateTokens <= inputBudget) {
+      return {
+        messages: sanitized,
+        tokensBefore: totalTokens,
+        tokensAfter: candidateTokens,
+        inputBudget,
+        safetyMarginTokens,
+        strategy,
+      };
+    }
+
+    const fitted = fitLastRoundToBudget(messages, fixedTokens, inputBudget);
+    const fittedTokens = fixedTokens + estimateMessageTokens(fitted.messages);
+    logger.info('Context budget enforced', {
+      tokensBefore: totalTokens,
+      tokensAfter: fittedTokens,
+      inputBudget,
+      safetyMarginTokens,
+      strategy: fitted.strategy,
+    });
+    return {
+      messages: fitted.messages,
+      tokensBefore: totalTokens,
+      tokensAfter: fittedTokens,
+      inputBudget,
+      safetyMarginTokens,
+      strategy: fitted.strategy,
+    };
+  };
+
+  if (rounds.length <= 1) {
+    return finalize(messages, 'last_round_compacted');
+  }
 
   // Keep first round only if it's recent enough to be relevant context.
   // In long-lived IM sessions, the first round from weeks ago is stale noise.
@@ -226,7 +491,7 @@ export function prepareContextMessages(
 
   // If no middle rounds, we can only return what we have
   if (middleRounds.length === 0) {
-    return messages;
+    return finalize(messages, 'recent_rounds');
   }
 
   // Step 1: Compress middle assistant messages, keep user messages
@@ -248,8 +513,8 @@ export function prepareContextMessages(
   ];
 
   const tokens1 = systemTokens + (toolSchemaTokens ?? 0) + estimateMessageTokens(sanitizeToolPairs(result1));
-  if (tokens1 <= maxInputTokens) {
-    return stripOldThinking(sanitizeToolPairs(result1));
+  if (tokens1 <= inputBudget) {
+    return finalize(result1, 'compressed_middle');
   }
 
   // Step 2: Drop middle entirely, keep first + recent
@@ -259,8 +524,8 @@ export function prepareContextMessages(
   ];
 
   const tokens2 = systemTokens + (toolSchemaTokens ?? 0) + estimateMessageTokens(sanitizeToolPairs(result2));
-  if (tokens2 <= maxInputTokens) {
-    return stripOldThinking(sanitizeToolPairs(result2));
+  if (tokens2 <= inputBudget) {
+    return finalize(result2, 'recent_rounds');
   }
 
   // Step 3: Aggressive — keep first user message (if recent) + last 2 rounds
@@ -268,10 +533,26 @@ export function prepareContextMessages(
   if (keepFirstRound) {
     const firstUserMsg = messages.find((m) => m.role === 'user');
     if (firstUserMsg) {
-      return stripOldThinking(sanitizeToolPairs([firstUserMsg, ...lastTwoRounds.flat()]));
+      return finalize([firstUserMsg, ...lastTwoRounds.flat()], 'last_two_rounds');
     }
   }
-  return stripOldThinking(sanitizeToolPairs(lastTwoRounds.flat()));
+  return finalize(lastTwoRounds.flat(), 'last_two_rounds');
+}
+
+export function prepareContextMessages(
+  messages: Message[],
+  systemPrompt: string,
+  contextWindowSize: number,
+  reserveForOutput: number,
+  toolSchemaTokens?: number,
+): Message[] {
+  return enforceContextBudget(
+    messages,
+    systemPrompt,
+    contextWindowSize,
+    reserveForOutput,
+    toolSchemaTokens,
+  ).messages;
 }
 
 /**

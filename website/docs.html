@@ -2,23 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- Redirect to the visitor's preferred language (browser language by default,
-         overridden by an explicit manual choice remembered in localStorage). -->
-    <script>
-    (function () {
-      try {
-        var pref = localStorage.getItem('abu-lang');
-        var target = pref || ((navigator.language || 'en').toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
-        if (target === 'zh') location.replace('docs.zh-CN.html');
-      } catch (e) {}
-    })();
-    </script>
+    <!-- This is an explicit English URL. Language selection happens at the
+         entry point so links from the desktop app always keep its UI locale. -->
     <link rel="alternate" hreflang="en" href="docs.html">
     <link rel="alternate" hreflang="zh-CN" href="docs.zh-CN.html">
     <link rel="alternate" hreflang="x-default" href="docs.html">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Docs — Abu</title>
-    <meta name="description" content="Abu documentation — User Guide, Installation Guide, and Browser Bridge notes">
+    <meta name="description" content="Abu documentation — quick start, models, projects, skills, connectors, web browsing, and safety">
     <link rel="icon" href="assets/abu-avatar.png" type="image/png">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="docs.css">
@@ -36,7 +27,11 @@
             <div class="nav-links" id="navLinks">
                 <a href="index.html#features" class="nav-link">Features</a>
                 <a href="index.html#screenshots" class="nav-link">Preview</a>
+                <a href="index.html#use-cases" class="nav-link">Use Cases</a>
+                <a href="index.html#tech" class="nav-link">Architecture</a>
+                <a href="enterprise.html" class="nav-link nav-link-hot" aria-label="Enterprise, hot">Enterprise<span class="nav-hot-flame" aria-hidden="true">🔥</span></a>
                 <a href="docs.html" class="nav-link nav-link-active">Docs</a>
+                <a href="index.html#social" class="nav-link">Community</a>
                 <a href="docs.zh-CN.html" class="nav-lang" aria-label="切换到中文" onclick="try{localStorage.setItem('abu-lang','zh')}catch(e){}">
                     <svg class="nav-lang-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                     中文
@@ -46,7 +41,7 @@
                     GitHub
                 </a>
             </div>
-            <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
+            <button class="nav-toggle" id="navToggle" aria-label="Open navigation menu" aria-controls="navLinks" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
         </div>
@@ -66,9 +61,9 @@
                         <svg class="docs-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Installation Guide
                     </a>
-                    <a href="#browser-bridge" class="docs-nav-item" data-doc="browser-bridge">
+                    <a href="#web-browsing" class="docs-nav-item" data-doc="web-browsing">
                         <svg class="docs-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        Browser Bridge
+                        Web Browsing
                     </a>
                 </div>
                 <div class="docs-toc-section" id="docsToc">
@@ -100,7 +95,7 @@
         const DOCS = {
             'user-guide': { file: 'docs/User-Guide.md', title: 'User Guide' },
             'installation': { file: 'docs/Installation-Guide.md', title: 'Installation Guide' },
-            'browser-bridge': { file: 'docs/browser-bridge-vs-playwright.md', title: 'Browser Bridge' }
+            'web-browsing': { file: 'docs/browser-bridge-vs-playwright.md', title: 'Web Browsing' }
         };
 
         let currentDoc = 'user-guide';
@@ -192,6 +187,13 @@
 
                 // Render markdown
                 article.innerHTML = marked.parse(md);
+
+                // Keep links between Markdown guides inside the single-page docs viewer.
+                article.querySelectorAll('a[href]').forEach(link => {
+                    const href = link.getAttribute('href').replace(/^\.\//, '');
+                    const target = Object.entries(DOCS).find(([, candidate]) => candidate.file.endsWith('/' + href));
+                    if (target) link.setAttribute('href', '#' + target[0]);
+                });
 
                 // Update page title
                 document.title = `${doc.title} — Abu`;
@@ -304,17 +306,39 @@
         // Mobile nav toggle
         const navToggle = document.getElementById('navToggle');
         const navLinks = document.getElementById('navLinks');
+        const closeNavigation = () => {
+            navLinks.classList.remove('open');
+            navToggle.classList.remove('open');
+            navToggle.setAttribute('aria-expanded', 'false');
+            navToggle.setAttribute('aria-label', 'Open navigation menu');
+        };
         navToggle.addEventListener('click', () => {
-            navLinks.classList.toggle('open');
-            navToggle.classList.toggle('open');
+            const isOpen = navLinks.classList.toggle('open');
+            navToggle.classList.toggle('open', isOpen);
+            navToggle.setAttribute('aria-expanded', String(isOpen));
+            navToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+        });
+        navLinks.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', closeNavigation);
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && navLinks.classList.contains('open')) {
+                closeNavigation();
+                navToggle.focus();
+            }
         });
 
         // Route on load
         function route() {
             const hash = window.location.hash.replace('#', '');
+            // Preserve old public links while using the current product term.
+            const docKey = hash === 'browser-bridge' ? 'web-browsing' : hash;
+            if (hash === 'browser-bridge') {
+                history.replaceState(null, '', '#web-browsing');
+            }
             // Check if hash matches a doc key
-            if (DOCS[hash]) {
-                loadDoc(hash);
+            if (DOCS[docKey]) {
+                loadDoc(docKey);
             } else {
                 // Default to user guide
                 loadDoc('user-guide');

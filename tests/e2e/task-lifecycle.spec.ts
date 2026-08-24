@@ -204,7 +204,78 @@ function diskContains(rootDir: string, expectedText: string, fileName = 'message
   return visit(rootDir);
 }
 
-function diskContainsExactAssistantMessage(rootDir: string, expectedContent: string): boolean {
+/**
+ * Since the message-ledger stage-2 write-amplification governance (see
+ * docs/abu-message-ledger-plan.md §3.6, merged PR #212), an in-flight
+ * assistant revision is durable crash-protection content the moment it lands
+ * in EITHER of two places: a checkpointed `messages.jsonl` line (stable
+ * checkpoints only — tool batch done, turn end, stop) or the per-turn
+ * `stream-snapshot.json` (one atomic whole-file overwrite per revision,
+ * written on a timer/per-tool-result while a turn is still running, see
+ * conversationStorage.ts `writeStreamSnapshot`). `loadMessages` folds the
+ * snapshot on top of the ledger on load, so either location recovers the
+ * exact content after an abrupt termination. This predicate pins that widened
+ * contract rather than the old ledger-only shape.
+ *
+ * Both on-disk snapshot shapes count, because a machine upgrading into this
+ * build can still be holding a snapshot written by the previous one:
+ *   v1 (legacy writer) `{"version":1,"messages":[Message,...]}`
+ *   v2 (current writer) `{"version":2,"entries":[{"message":Message,...},...]}`
+ * — the per-entry `stamp` watermark the RB-03 supersede guard added is not
+ * part of the recoverability contract, so it is deliberately not asserted here.
+ */
+function diskContainsRecoverableAssistantMessage(rootDir: string, expectedContent: string): boolean {
+  const matchesAssistantMessage = (message: { role?: unknown; content?: unknown }): boolean =>
+    message.role === 'assistant' && message.content === expectedContent;
+
+  const visit = (dir: string): boolean => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    return entries.some((entry) => {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) return visit(entryPath);
+      if (entry.name === 'messages.jsonl') {
+        try {
+          return fs.readFileSync(entryPath, 'utf8')
+            .trimEnd()
+            .split('\n')
+            .some((line) => matchesAssistantMessage(JSON.parse(line)));
+        } catch {
+          return false;
+        }
+      }
+      if (entry.name === 'stream-snapshot.json') {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(entryPath, 'utf8')) as {
+            version?: unknown;
+            messages?: unknown;
+            entries?: unknown;
+          };
+          if (parsed.version === 1 && Array.isArray(parsed.messages)) {
+            return parsed.messages.some((message) =>
+              matchesAssistantMessage(message as { role?: unknown; content?: unknown }));
+          }
+          if (parsed.version === 2 && Array.isArray(parsed.entries)) {
+            return parsed.entries.some((snapshotEntry) =>
+              matchesAssistantMessage(
+                (snapshotEntry as { message?: { role?: unknown; content?: unknown } }).message ?? {}));
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    });
+  };
+  return visit(rootDir);
+}
+
+function diskContainsInterruptedUserMessage(rootDir: string, expectedContent: string): boolean {
   const visit = (dir: string): boolean => {
     let entries: fs.Dirent[];
     try {
@@ -221,8 +292,16 @@ function diskContainsExactAssistantMessage(rootDir: string, expectedContent: str
           .trimEnd()
           .split('\n')
           .some((line) => {
-            const message = JSON.parse(line) as { role?: unknown; content?: unknown };
-            return message.role === 'assistant' && message.content === expectedContent;
+            const message = JSON.parse(line) as {
+              content?: unknown;
+              role?: unknown;
+              runEndedAt?: unknown;
+              runState?: unknown;
+            };
+            return message.role === 'user'
+              && message.content === expectedContent
+              && message.runState === 'interrupted'
+              && typeof message.runEndedAt === 'number';
           });
       } catch {
         return false;
@@ -354,7 +433,6 @@ test.describe.serial('Electron product task lifecycle', () => {
     const followUp = `abu-e2e-stop-follow-up-${randomUUID()}`;
     const followUpResponse = `abu-e2e-stop-follow-up-answer-${randomUUID()}`;
     const recentTitle = `${prompt.slice(0, 30)}...`;
-    const stoppedContent = `${partial}\n\n*[已停止]*`;
     mock = await startOpenAiMock([
       { kind: 'hold-open', partialText: partial },
       { kind: 'complete', responseText: followUpResponse },
@@ -388,12 +466,19 @@ test.describe.serial('Electron product task lifecycle', () => {
     await expect(stopButton).toBeHidden({ timeout: READY_TIMEOUT });
     await expect(input).toBeEditable({ timeout: READY_TIMEOUT });
     await expect(firstPage.getByText(partial, { exact: true })).toBeVisible({ timeout: READY_TIMEOUT });
-    await expect(firstPage.getByText('[已停止]', { exact: true })).toBeVisible({ timeout: READY_TIMEOUT });
+    await expect(firstPage.getByText(/^(?:你在 .* 后停止了|You stopped after .*)$/)).toBeVisible({
+      timeout: READY_TIMEOUT,
+    });
 
-    // Exact persisted content proves both the partial token and the stop
-    // marker survived, with no later stream token appended after cancellation.
+    // The assistant content stays model-authored while the durable user-run
+    // terminal carries the stop state. Together they prove no later stream
+    // token was appended and the status can be reconstructed after restart.
     await expect.poll(
-      () => diskContainsExactAssistantMessage(dataRoot!.appDataDir, stoppedContent),
+      () => diskContainsRecoverableAssistantMessage(dataRoot!.appDataDir, partial),
+      { timeout: READY_TIMEOUT },
+    ).toBe(true);
+    await expect.poll(
+      () => diskContainsInterruptedUserMessage(dataRoot!.appDataDir, prompt),
       { timeout: READY_TIMEOUT },
     ).toBe(true);
     await expect.poll(
@@ -414,7 +499,9 @@ test.describe.serial('Electron product task lifecycle', () => {
     await expect(recentConversation).toBeVisible({ timeout: READY_TIMEOUT });
     await recentConversation.click();
     await expect(secondPage.getByText(partial, { exact: true })).toBeVisible({ timeout: READY_TIMEOUT });
-    await expect(secondPage.getByText('[已停止]', { exact: true })).toBeVisible({ timeout: READY_TIMEOUT });
+    await expect(secondPage.getByText(/^(?:你在 .* 后停止了|You stopped after .*)$/)).toBeVisible({
+      timeout: READY_TIMEOUT,
+    });
 
     const restoredInput = secondPage.getByPlaceholder(CHAT_PLACEHOLDER);
     await restoredInput.fill(followUp);
@@ -426,11 +513,11 @@ test.describe.serial('Electron product task lifecycle', () => {
     const secondRequestBody = JSON.stringify(secondRequest.body);
     expect(secondRequestBody).toContain(prompt);
     expect(secondRequestBody).toContain(partial);
-    expect(secondRequestBody).toContain('[已停止]');
+    expect(secondRequestBody).not.toContain('[已停止]');
     expect(secondRequestBody).toContain(followUp);
     await expect(secondPage.getByText(followUpResponse, { exact: true })).toBeVisible({ timeout: READY_TIMEOUT });
     await expect.poll(
-      () => diskContainsExactAssistantMessage(dataRoot!.appDataDir, followUpResponse),
+      () => diskContainsRecoverableAssistantMessage(dataRoot!.appDataDir, followUpResponse),
       { timeout: READY_TIMEOUT },
     ).toBe(true);
   });
@@ -467,7 +554,7 @@ test.describe.serial('Electron product task lifecycle', () => {
     // The stream intentionally sends no more chunks. Crash protection must be
     // driven by elapsed time, not by waiting for another provider event.
     await expect.poll(
-      () => diskContainsExactAssistantMessage(dataRoot!.appDataDir, partial),
+      () => diskContainsRecoverableAssistantMessage(dataRoot!.appDataDir, partial),
       { timeout: 15_000 },
     ).toBe(true);
 

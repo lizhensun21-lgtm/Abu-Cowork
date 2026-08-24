@@ -24,6 +24,12 @@ vi.mock('./rpcClient', () => ({
   setPreRequestFlush: (...a: unknown[]) => setPreRequestFlushMock(...a),
 }));
 
+const traceSidecarRuntimeEventMock = vi.hoisted(() => vi.fn());
+vi.mock('./runtimeTrace', () => ({
+  traceSidecarRuntimeEvent: (...a: unknown[]) => traceSidecarRuntimeEventMock(...a),
+  sidecarRuntimeErrorType: (error: unknown) => error instanceof Error ? error.name.toLowerCase() : typeof error,
+}));
+
 // P1-3d-1 — mock the local tool registry so this file's dispatch tests
 // (see "local tool dispatch (P1-3d-1)" below) exercise ONLY
 // createReverseToolInvoker.executeAnyTool's branch/fallback wiring, not any
@@ -46,6 +52,8 @@ vi.mock('./localTools', () => ({
 
 import {
   handleAgentRun,
+  handleAgentStart,
+  handleAgentGetState,
   handleAgentAbort,
   handleAgentEnqueueInput,
   handleStateConvPatch,
@@ -54,6 +62,7 @@ import {
   handleStatePlanMode,
   shutdownAllAgentRuns,
   __getActiveAgentRunCount,
+  __resetAgentRunRegistryForTests,
 } from './agentLoopHost';
 import { getCurrentAgentRunContext } from './agentRunContext';
 // Real (unmocked) module — this file doesn't mock '@/core/agent/userInputQueue',
@@ -122,10 +131,78 @@ describe('agentLoopHost', () => {
     sendRequestMock.mockReset();
     mockSendRequest();
     sendNotificationMock.mockReset();
+    traceSidecarRuntimeEventMock.mockReset();
     hasLocalToolMock.mockReset();
     hasLocalToolMock.mockReturnValue(false);
     isLocalToolReadOnlyMock.mockReset();
     executeLocalToolMock.mockReset();
+    __resetAgentRunRegistryForTests();
+  });
+
+  describe('Reliable Run Protocol start registry', () => {
+    function reliableParams(overrides: Record<string, unknown> = {}) {
+      const params = baseParams(overrides);
+      return {
+        ...params,
+        clientMessageId: `msg-${params.runId}`,
+        payloadDigest: `digest-${params.runId}`,
+        options: { prePersistedUserMessageId: `msg-${params.runId}` },
+      };
+    }
+
+    it('acknowledges ownership before execution and exposes accepted state', () => {
+      const params = reliableParams({ runId: 'start-accepted' });
+      expect(handleAgentStart(params)).toEqual(expect.objectContaining({
+        version: 1,
+        runId: 'start-accepted',
+        clientMessageId: 'msg-start-accepted',
+        state: 'accepted',
+        replay: false,
+      }));
+      expect(runAgentLoopMock).not.toHaveBeenCalled();
+      expect(handleAgentGetState({ runId: 'start-accepted' })).toEqual(expect.objectContaining({
+        state: 'accepted',
+        clientMessageId: 'msg-start-accepted',
+      }));
+    });
+
+    it('replays the same acceptance without executing twice and rejects conflicting reuse', () => {
+      const params = reliableParams({ runId: 'start-replay' });
+      handleAgentStart(params);
+      expect(handleAgentStart(params)).toEqual(expect.objectContaining({ replay: true, state: 'accepted' }));
+      expect(() => handleAgentStart({ ...params, payloadDigest: 'different' })).toThrow(RpcError);
+      expect(runAgentLoopMock).not.toHaveBeenCalled();
+    });
+
+    it('caches the ordered terminal for getState and later start replays', async () => {
+      const params = reliableParams({ runId: 'start-terminal' });
+      handleAgentStart(params);
+      runAgentLoopMock.mockResolvedValueOnce({ reason: 'completed' });
+      await handleAgentRun(params);
+
+      expect(handleAgentGetState({ runId: params.runId })).toEqual(expect.objectContaining({
+        state: 'terminal',
+        terminal: expect.objectContaining({ state: 'completed', result: { reason: 'completed' } }),
+      }));
+      expect(handleAgentStart(params)).toEqual(expect.objectContaining({
+        replay: true,
+        state: 'terminal',
+        terminal: expect.objectContaining({ state: 'completed' }),
+      }));
+      expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts Stop between ACK and execution and never enters the loop', async () => {
+      const params = reliableParams({ runId: 'start-cancelled' });
+      handleAgentStart(params);
+      expect(handleAgentAbort({ runId: params.runId })).toEqual({ accepted: true, state: 'aborting' });
+      await expect(handleAgentRun(params)).resolves.toEqual({ reason: 'aborted' });
+      expect(runAgentLoopMock).not.toHaveBeenCalled();
+      expect(handleAgentGetState({ runId: params.runId })).toEqual(expect.objectContaining({
+        state: 'terminal',
+        terminal: expect.objectContaining({ state: 'interrupted' }),
+      }));
+    });
   });
 
   describe('param validation', () => {
@@ -170,6 +247,18 @@ describe('agentLoopHost', () => {
       const result = await handleAgentRun(params);
       expect(result).toEqual({ reason: 'completed' });
       expect(sawContextRunId).toBe(params.runId);
+      expect(traceSidecarRuntimeEventMock).toHaveBeenCalledWith(
+        'sidecar.agent_run_received',
+        expect.objectContaining({ runId: params.runId, stage: 'params_parsed' }),
+      );
+      expect(traceSidecarRuntimeEventMock).toHaveBeenCalledWith(
+        'sidecar.agent_loop_started',
+        expect.objectContaining({ runId: params.runId, stage: 'agent_loop_running' }),
+      );
+      expect(traceSidecarRuntimeEventMock).toHaveBeenCalledWith(
+        'sidecar.agent_run_completed',
+        expect.objectContaining({ runId: params.runId, outcome: 'completed' }),
+      );
     });
 
     it('passes settingsReader/orchestration/options through AgentLoopOptions', async () => {
@@ -208,6 +297,17 @@ describe('agentLoopHost', () => {
       const errParams = baseParams();
       await expect(handleAgentRun(errParams)).rejects.toThrow('boom');
       expect(__getActiveAgentRunCount()).toBe(before);
+      expect(sendNotificationMock).toHaveBeenCalledWith('agent.terminal', {
+        version: 1,
+        runId: errParams.runId,
+        state: 'failed',
+        result: { reason: 'error', error: 'boom' },
+        failure: {
+          errorType: 'error',
+          message: 'boom',
+          stack: expect.stringContaining('Error: boom'),
+        },
+      });
     });
   });
 
@@ -266,6 +366,10 @@ describe('agentLoopHost', () => {
       expect(capturedSignal?.aborted).toBe(false);
       expect(handleAgentAbort({ runId: 'abort-me' })).toEqual({ accepted: true, state: 'aborting' });
       expect(capturedSignal?.aborted).toBe(true);
+      expect(traceSidecarRuntimeEventMock).toHaveBeenCalledWith(
+        'sidecar.agent_abort_ack_ready',
+        expect.objectContaining({ runId: 'abort-me', outcome: 'success' }),
+      );
       releaseLoop?.();
       const result = await runPromise;
       expect(result).toEqual({ reason: 'aborted' });
@@ -457,6 +561,23 @@ describe('agentLoopHost', () => {
       const lastBatch = deltaCalls[deltaCalls.length - 1][1] as { runId: string; frames: unknown[] };
       expect(lastBatch.runId).toBe('flush-me');
       expect(lastBatch.frames.length).toBeGreaterThan(0);
+      expect(sendNotificationMock).toHaveBeenCalledWith('agent.terminal', {
+        version: 1,
+        runId: 'flush-me',
+        state: 'completed',
+        result: { reason: 'completed' },
+      });
+      const deltaOrder = sendNotificationMock.mock.invocationCallOrder[
+        sendNotificationMock.mock.calls.findLastIndex((call) => call[0] === 'agent.delta')
+      ];
+      const terminalOrder = sendNotificationMock.mock.invocationCallOrder[
+        sendNotificationMock.mock.calls.findIndex((call) => call[0] === 'agent.terminal')
+      ];
+      expect(deltaOrder).toBeLessThan(terminalOrder);
+      expect(traceSidecarRuntimeEventMock).toHaveBeenCalledWith(
+        'sidecar.agent_delta_emitted',
+        expect.objectContaining({ runId: 'flush-me', frameCount: lastBatch.frames.length }),
+      );
     });
   });
 
@@ -494,7 +615,18 @@ describe('agentLoopHost', () => {
       hasLocalToolMock.mockReturnValue(false);
 
       const result = await withToolInvoker((toolInvoker) =>
-        toolInvoker.executeAnyTool('read_file', { path: '/tmp/x' }),
+        toolInvoker.executeAnyTool(
+          'read_file',
+          { path: '/tmp/x' },
+          undefined,
+          undefined,
+          {
+            conversationId: 'conv-wire',
+            deferredToolNames: ['rare_clipboard'],
+            abortSignal: new AbortController().signal,
+            reportMetadata: vi.fn(),
+          },
+        ),
       );
 
       expect(result).toBe('tool output');
@@ -502,7 +634,14 @@ describe('agentLoopHost', () => {
       expect(sendRequestMock).not.toHaveBeenCalledWith('approval.check', expect.anything());
       expect(sendRequestMock).toHaveBeenCalledWith(
         'tool.invoke',
-        expect.objectContaining({ toolName: 'read_file', input: { path: '/tmp/x' } }),
+        expect.objectContaining({
+          toolName: 'read_file',
+          input: { path: '/tmp/x' },
+          context: {
+            conversationId: 'conv-wire',
+            deferredToolNames: ['rare_clipboard'],
+          },
+        }),
       );
     });
 

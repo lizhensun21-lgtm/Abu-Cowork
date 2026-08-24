@@ -45,6 +45,8 @@ $tauriLegacyUninstallKey = `
   "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\Abu"
 $tauriTransitionHiddenMarker = "AbuElectronTransitionHidden"
 $createdLegacyUninstallFixture = $false
+$primaryFailure = $null
+$cleanupFailure = $null
 
 try {
   if ($expectMigration) {
@@ -135,12 +137,19 @@ try {
       $installedProcesses = @(
         Get-Process -Name "Abu" -ErrorAction SilentlyContinue |
           Where-Object {
-            $beforePids -notcontains $_.Id -and
-            $_.Path -and
-            [System.IO.Path]::GetFullPath($_.Path).Equals(
-              $installedPath,
-              [System.StringComparison]::OrdinalIgnoreCase
-            )
+            try {
+              $beforePids -notcontains $_.Id -and
+              $_.Path -and
+              [System.IO.Path]::GetFullPath($_.Path).Equals(
+                $installedPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+              )
+            } catch {
+              # A process exiting mid-shutdown can expose an empty/unreadable
+              # Path; treat it as not-a-match instead of crashing the smoke
+              # (mirrors the try/catch already guarding the Un_* scan below).
+              $false
+            }
           }
       )
       if ($installedProcesses | Where-Object { $_.MainWindowHandle -ne 0 }) {
@@ -162,12 +171,19 @@ try {
       $installedProcesses = @(
         Get-Process -Name "Abu" -ErrorAction SilentlyContinue |
           Where-Object {
-            $beforePids -notcontains $_.Id -and
-            $_.Path -and
-            [System.IO.Path]::GetFullPath($_.Path).Equals(
-              $installedPath,
-              [System.StringComparison]::OrdinalIgnoreCase
-            )
+            try {
+              $beforePids -notcontains $_.Id -and
+              $_.Path -and
+              [System.IO.Path]::GetFullPath($_.Path).Equals(
+                $installedPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+              )
+            } catch {
+              # A process exiting mid-shutdown can expose an empty/unreadable
+              # Path; treat it as not-a-match instead of crashing the smoke
+              # (mirrors the try/catch already guarding the Un_* scan below).
+              $false
+            }
           }
       )
     } while ($installedProcesses.Count -gt 0 -and [DateTime]::UtcNow -lt $shutdownDeadline)
@@ -273,11 +289,26 @@ try {
   }
 
 }
+catch {
+  # Cleanup must not replace the actual installed-app failure. Preserve both so
+  # a broken launch/migration and a broken rollback path remain independently
+  # actionable in CI instead of whichever exception happened last winning.
+  $primaryFailure = $_
+}
 finally {
+  try {
   foreach ($process in $installedProcesses) {
     if (-not $process.HasExited) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
+  }
+  # A failure before the happy-path lookup must still uninstall the candidate
+  # and restore the legacy entry. Resolve the uninstaller again from the
+  # installed executable instead of skipping rollback with a null variable.
+  if (-not $uninstaller -and $installedExe -and (Test-Path $installedExe.DirectoryName)) {
+    $uninstaller = Get-ChildItem -Path $installedExe.DirectoryName `
+      -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue |
+      Select-Object -First 1
   }
   if ($uninstaller -and (Test-Path $uninstaller.FullName)) {
     # Do not start the uninstaller while an Electron process is still winding
@@ -290,11 +321,18 @@ finally {
       $remainingInstalledProcesses = @(
         Get-Process -Name "Abu" -ErrorAction SilentlyContinue |
           Where-Object {
-            $_.Path -and
-            [System.IO.Path]::GetFullPath($_.Path).Equals(
-              $installedPath,
-              [System.StringComparison]::OrdinalIgnoreCase
-            )
+            try {
+              $_.Path -and
+              [System.IO.Path]::GetFullPath($_.Path).Equals(
+                $installedPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+              )
+            } catch {
+              # A process exiting mid-shutdown can expose an empty/unreadable
+              # Path; treat it as not-a-match instead of crashing the smoke
+              # (mirrors the try/catch already guarding the Un_* scan below).
+              $false
+            }
           }
       )
       foreach ($process in $remainingInstalledProcesses) {
@@ -448,6 +486,21 @@ finally {
   Remove-Item Env:ABU_E2E_MIGRATION_DIAGNOSTICS_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ABU_PACKAGED_E2E -ErrorAction SilentlyContinue
   Remove-Item $migrationDiagnostics -Force -ErrorAction SilentlyContinue
+  }
+  catch {
+    $cleanupFailure = $_
+  }
+}
+
+if ($primaryFailure -and $cleanupFailure) {
+  throw "Installed smoke failed: $($primaryFailure.Exception.Message); " +
+    "cleanup/rollback also failed: $($cleanupFailure.Exception.Message)"
+}
+if ($primaryFailure) {
+  throw $primaryFailure
+}
+if ($cleanupFailure) {
+  throw $cleanupFailure
 }
 
 Write-Host "[windows-installed-smoke] PASS"

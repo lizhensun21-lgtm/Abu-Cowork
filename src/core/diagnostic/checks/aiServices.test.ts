@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { ProviderInstance } from '@/types/provider';
 
@@ -12,6 +12,13 @@ vi.mock('@/core/llm/providerCallHealth', () => ({
 }));
 
 import { runAIServicesChecks } from './aiServices';
+
+// Deterministic clock (TESTING.md §3) — aiServices.ts reads Date.now() directly
+// (no injectable clock) to compare against the mocked getProviderCallHealth()'s
+// `at` field for the 30-minute recent-failure window, so tests freeze the
+// global clock instead of depending on real wall-clock proximity between the
+// `at: Date.now()` seed and the production comparison a moment later.
+const FIXED_NOW = 1_700_000_000_000;
 
 function makeProvider(overrides: Partial<ProviderInstance> = {}): ProviderInstance {
   return {
@@ -31,12 +38,103 @@ function makeProvider(overrides: Partial<ProviderInstance> = {}): ProviderInstan
 
 describe('runAIServicesChecks — recent real-call failures', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
     getProviderCallHealthMock.mockReset();
-    useSettingsStore.setState({ providers: [makeProvider()] });
+    useSettingsStore.setState({ providers: [makeProvider()], computerUseEnabled: false });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('warns when the active Computer Use model is declared text-only', async () => {
+    getProviderCallHealthMock.mockReturnValue(undefined);
+    const provider = makeProvider({
+      models: [{
+        id: 'deepseek-text',
+        label: 'DeepSeek Text',
+        declaredCapabilities: { supportsTools: true, supportsImages: false },
+      }],
+    });
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'deepseek-text' },
+      computerUseEnabled: true,
+    });
+
+    const results = await runAIServicesChecks();
+    const support = results.find(row => row.id === 'ai-services:computer-use-model');
+
+    expect(support?.status).toBe('warning');
+    expect(support?.metric).toContain('deepseek-text');
+  });
+
+  it('classifies the built-in DeepSeek text model as structured-only Computer Use', async () => {
+    getProviderCallHealthMock.mockReturnValue(undefined);
+    const provider = makeProvider({
+      id: 'deepseek',
+      source: 'builtin',
+      name: 'DeepSeek',
+      models: [{ id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }],
+    });
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'deepseek-v4-pro' },
+      computerUseEnabled: true,
+    });
+
+    const results = await runAIServicesChecks();
+    const support = results.find(row => row.id === 'ai-services:computer-use-model');
+
+    expect(support?.status).toBe('warning');
+    expect(support?.metric).toContain('deepseek-v4-pro');
+    expect(support?.errorMessage).toBeTruthy();
+  });
+
+  it('fails closed for an undeclared custom endpoint even when the model id looks familiar', async () => {
+    getProviderCallHealthMock.mockReturnValue(undefined);
+    const provider = makeProvider({
+      models: [{ id: 'gpt-4o', label: 'GPT-4o Proxy' }],
+    });
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'gpt-4o' },
+      computerUseEnabled: true,
+    });
+
+    const results = await runAIServicesChecks();
+    const support = results.find(row => row.id === 'ai-services:computer-use-model');
+
+    expect(support?.status).toBe('failed');
+    expect(support?.metric).toContain('Not verified');
+    expect(support?.errorMessage).toContain('does not declare reliable tool calling');
+  });
+
+  it('reports an explicit no-tools declaration as unsupported', async () => {
+    getProviderCallHealthMock.mockReturnValue(undefined);
+    const provider = makeProvider({
+      models: [{
+        id: 'text-only-no-tools',
+        label: 'Text Only',
+        declaredCapabilities: { supportsTools: false, supportsImages: false },
+      }],
+    });
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'text-only-no-tools' },
+      computerUseEnabled: true,
+    });
+
+    const results = await runAIServicesChecks();
+    const support = results.find(row => row.id === 'ai-services:computer-use-model');
+
+    expect(support?.status).toBe('failed');
+    expect(support?.metric).toContain('Unsupported');
   });
 
   it('downgrades to "warning" when the last recorded real-call outcome is a recent failure', async () => {
-    getProviderCallHealthMock.mockReturnValue({ ok: false, code: 'not_found', at: Date.now() });
+    getProviderCallHealthMock.mockReturnValue({ ok: false, code: 'not_found', at: FIXED_NOW });
 
     const results = await runAIServicesChecks();
     expect(results).toHaveLength(1);
@@ -56,7 +154,7 @@ describe('runAIServicesChecks — recent real-call failures', () => {
   });
 
   it('stays "passed" when the last recorded outcome is a success', async () => {
-    getProviderCallHealthMock.mockReturnValue({ ok: true, at: Date.now() });
+    getProviderCallHealthMock.mockReturnValue({ ok: true, at: FIXED_NOW });
 
     const results = await runAIServicesChecks();
     expect(results).toHaveLength(1);
@@ -64,7 +162,7 @@ describe('runAIServicesChecks — recent real-call failures', () => {
   });
 
   it('stays "passed" when the recorded failure is outside the 30-minute window (self-healing/staleness)', async () => {
-    getProviderCallHealthMock.mockReturnValue({ ok: false, code: 'not_found', at: Date.now() - 40 * 60 * 1000 });
+    getProviderCallHealthMock.mockReturnValue({ ok: false, code: 'not_found', at: FIXED_NOW - 40 * 60 * 1000 });
 
     const results = await runAIServicesChecks();
     expect(results).toHaveLength(1);

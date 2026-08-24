@@ -23,11 +23,11 @@ test('Windows overlays native caption buttons and removes the second menu-bar ro
     titleBarOverlay: {
       color: WINDOWS_OVERLAY_BACKGROUND,
       symbolColor: LIGHT_CHROME.symbolColor,
-      height: 36,
+      height: 30,
     },
     autoHideMenuBar: true,
   });
-  assert.equal(WINDOWS_TOOLBAR_HEIGHT, 36);
+  assert.equal(WINDOWS_TOOLBAR_HEIGHT, 30);
   const templates = [];
   const calls = { menu: [], autoHide: [], visible: [], maximize: [], unmaximize: [] };
   let maximized = false;
@@ -178,4 +178,14 @@ test('Electron maps both historical and current Tauri drag attributes', () => {
   assert.match(WINDOW_DRAG_REGION_CSS, /data-tauri-drag-region\]/);
   assert.match(WINDOW_DRAG_REGION_CSS, /data-electron-no-drag/);
   assert.match(WINDOW_DRAG_REGION_CSS, /no-drag/);
+});
+
+test('portaled popper layers subtract themselves from the drag lanes', () => {
+  // Radix renders poppers straight into document.body, so no ancestor of ours
+  // can hand them the no-drag marker. Without this selector a dropdown opened
+  // over the 72px Windows chrome band has every click eaten by the drag lane.
+  assert.match(
+    WINDOW_DRAG_REGION_CSS,
+    /\[data-radix-popper-content-wrapper\],\[data-radix-popper-content-wrapper\] \*\{-webkit-app-region:no-drag\}/,
+  );
 });

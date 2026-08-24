@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import type { Event } from '@tauri-apps/api/event';
@@ -24,6 +25,10 @@ vi.mock('@/utils/notifications', () => ({
 
 import { installNoticeFocusSync } from './focusSync';
 
+// Filler timestamp (TESTING.md §3) — required by the Notice/GateContext shapes
+// but never asserted on below.
+const FIXED_TIMESTAMP = 1_700_000_000_000;
+
 function makeNotice(id: string): Notice {
   return {
     id,
@@ -32,7 +37,7 @@ function makeNotice(id: string): Notice {
     source: 'agent',
     payload: { conversationId: 'conv-1' },
     dedupKey: id,
-    createdAt: Date.now(),
+    createdAt: FIXED_TIMESTAMP,
   };
 }
 
@@ -71,11 +76,11 @@ describe('installNoticeFocusSync', () => {
 
     useNoticeMenubarStore.getState().addNotice(makeNotice('ntc-2'));
     mocks.nativeHandler!({ payload: false } as Event<boolean>);
-    expect(cachedContextProvider(Date.now()).mainWindowFocused).toBe(false);
+    expect(cachedContextProvider(FIXED_TIMESTAMP).mainWindowFocused).toBe(false);
     expect(useNoticeMenubarStore.getState().notices).toHaveLength(1);
 
     mocks.nativeHandler!({ payload: true } as Event<boolean>);
-    expect(cachedContextProvider(Date.now()).mainWindowFocused).toBe(true);
+    expect(cachedContextProvider(FIXED_TIMESTAMP).mainWindowFocused).toBe(true);
     expect(useNoticeMenubarStore.getState().notices).toEqual([]);
     expect(onNativeFocused).toHaveBeenCalledTimes(1);
     cleanup();

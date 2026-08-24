@@ -13,7 +13,7 @@ extraMetadata:
     # This fork is the Project Management edition by default. Official upstream
     # CI must override the distribution and officialBuild marker together.
     distribution: abu-project-management
-    upstreamBaseVersion: 0.34.2
+    upstreamBaseVersion: 0.41.0
     # Source/fork builds are never allowed to inherit Abu's production updater.
     # Official release CI overrides this exact boolean together with `publish`.
     officialBuild: false
@@ -168,6 +168,11 @@ publish: null
 mac:
   category: public.app-category.productivity
   icon: src-tauri/icons/icon.icns
+  # Let macOS pick the localized app name ("阿布") from
+  # <locale>.lproj/InfoPlist.strings, written by the afterPack hook
+  # (scripts/electron-localize-app-name.cjs) so Spotlight matches Chinese.
+  extendInfo:
+    LSHasLocalizedDisplayName: true
   artifactName: "${productName}-${version}-mac-${arch}.${ext}"
   # `npm run pack:electron` (--dir) still produces just the unpacked .app for
   # fast iteration + the packaged smoke. `npm run dist:electron` builds:

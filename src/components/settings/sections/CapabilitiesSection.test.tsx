@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /// <reference types="@testing-library/jest-dom" />
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -8,6 +9,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useMCPStore } from '@/stores/mcpStore';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import type { SkillMetadata } from '@/types';
+import type { ProviderInstance } from '@/types/provider';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -53,6 +55,22 @@ function findCapabilityCard(title: string): HTMLElement {
   return card as HTMLElement;
 }
 
+function makeModelProvider(overrides: Partial<ProviderInstance>): ProviderInstance {
+  return {
+    id: 'computer-model-test',
+    source: 'builtin',
+    name: 'Computer Model Test',
+    enabled: true,
+    apiFormat: 'openai-compatible',
+    baseUrl: 'https://example.com/v1',
+    apiKey: 'test-key',
+    models: [{ id: 'deepseek-chat', label: 'DeepSeek Chat' }],
+    status: 'verified',
+    sortOrder: 0,
+    ...overrides,
+  };
+}
+
 describe('CapabilitiesSection', () => {
   beforeEach(() => {
     initLanguage('en-US');
@@ -95,8 +113,13 @@ describe('CapabilitiesSection', () => {
       return Promise.resolve(undefined);
     });
 
+    const defaultProvider = makeModelProvider({
+      models: [{ id: 'gpt-4o', label: 'GPT-4o' }],
+    });
     useSettingsStore.setState({
       computerUseEnabled: true,
+      providers: [defaultProvider],
+      activeModel: { providerId: defaultProvider.id, modelId: 'gpt-4o' },
       capabilitySetupTarget: null,
       disabledSkills: ['disabled-skill'],
       systemSettingsOpen: true,
@@ -149,6 +172,43 @@ describe('CapabilitiesSection', () => {
     expect(within(computerCard).getByText('Allowed')).toBeInTheDocument();
     expect(within(computerCard).getByText('Control interface')).toBeInTheDocument();
     expect(within(computerCard).getByText('Not allowed')).toBeInTheDocument();
+  });
+
+  it('shows DeepSeek without vision as structured mode instead of unavailable', async () => {
+    const provider = makeModelProvider({});
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'deepseek-chat' },
+    });
+
+    render(<CapabilitiesSection />);
+    const computerCard = findCapabilityCard('Computer Use');
+
+    expect(within(computerCard).getByText(/deepseek-chat · Structured mode/)).toBeInTheDocument();
+    expect(within(computerCard).getByText(/No image input/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(computerCard).getByText('Permission required')).toBeInTheDocument();
+    });
+  });
+
+  it('marks an undeclared custom endpoint as not verified and not ready', async () => {
+    const provider = makeModelProvider({
+      source: 'custom',
+      models: [{ id: 'private-proxy-model', label: 'Private Proxy' }],
+    });
+    useSettingsStore.setState({
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelId: 'private-proxy-model' },
+    });
+
+    render(<CapabilitiesSection />);
+    const computerCard = findCapabilityCard('Computer Use');
+
+    expect(within(computerCard).getByText(/private-proxy-model · Not verified/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(computerCard).getByText('Setup required')).toBeInTheDocument();
+    });
+    expect(computerCard).toHaveTextContent('Confirm its model capabilities');
   });
 
   it('guides the local Chrome extension setup without exposing MCP configuration', async () => {
@@ -418,10 +478,13 @@ describe('CapabilitiesSection', () => {
       'computer_use_permission_guide_show',
       expect.objectContaining({
         requestedByTask: true,
-        permissions: {
+        permissions: expect.objectContaining({
           screenRead: true,
           uiControl: false,
-        },
+          screenReadStatus: 'granted',
+          uiControlStatus: 'not-determined',
+          restartRequired: false,
+        }),
         strings: expect.objectContaining({
           title: 'Enable Computer Use',
           allow: 'Allow',
@@ -429,6 +492,30 @@ describe('CapabilitiesSection', () => {
         }),
       }),
     );
+  });
+
+  it('shows only Accessibility for an AX-only task setup', async () => {
+    useSettingsStore.setState({ computerUseEnabled: true });
+    invoke.mockImplementation((command: string) => {
+      if (command === 'check_macos_permissions') {
+        return Promise.resolve({
+          screen_recording: false,
+          accessibility: false,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<CapabilitiesSection
+      setupTarget="computer"
+      requestedByTask
+      setupOnly
+      computerUseRequirements={{ screenRead: false, uiControl: true }}
+    />);
+
+    expect((await screen.findAllByText('Control interface')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('View screen')).not.toBeInTheDocument();
+    expect(screen.getByText('Required permission')).toBeInTheDocument();
   });
 
   it('keeps background permission checks silent and advances the active step', async () => {
@@ -542,5 +629,49 @@ describe('CapabilitiesSection', () => {
       expect(useSettingsStore.getState().computerUseEnabled).toBe(true);
     });
     expect(invoke).toHaveBeenCalledWith('check_macos_permissions');
+  });
+
+  // Settings is the one place where every standing site verdict has to be
+  // visible AND changeable: the dialog can only write a verdict for the site
+  // it is currently asking about, so tightening a site the user already
+  // allowed is otherwise impossible without wiping it and waiting to be asked.
+  describe('browser site permissions list', () => {
+    it('lists both verdicts and switches an allowed site to blocked', async () => {
+      useSettingsStore.setState({
+        browserSitePermissions: {
+          'https://allowed.example.com': 'allowed',
+          'https://blocked.example.com': 'denied',
+        },
+      });
+      const user = userEvent.setup();
+      render(<CapabilitiesSection />);
+
+      const row = screen.getByTitle('https://allowed.example.com').closest('li');
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByRole('button', { name: 'Always allow' }))
+        .toBeInTheDocument();
+      expect(screen.getByTitle('https://blocked.example.com')).toBeInTheDocument();
+
+      await user.click(within(row as HTMLElement).getByRole('button', { name: 'Always allow' }));
+      await user.click(within(row as HTMLElement).getByRole('button', { name: 'Blocked' }));
+
+      expect(useSettingsStore.getState().browserSitePermissions).toEqual({
+        'https://allowed.example.com': 'denied',
+        'https://blocked.example.com': 'denied',
+      });
+    });
+
+    it('removes a verdict entirely, restoring ask-every-time', async () => {
+      useSettingsStore.setState({
+        browserSitePermissions: { 'https://example.com': 'denied' },
+      });
+      const user = userEvent.setup();
+      render(<CapabilitiesSection />);
+
+      const row = screen.getByTitle('https://example.com').closest('li');
+      await user.click(within(row as HTMLElement).getByRole('button', { name: 'Remove' }));
+
+      expect(useSettingsStore.getState().browserSitePermissions).toEqual({});
+    });
   });
 });

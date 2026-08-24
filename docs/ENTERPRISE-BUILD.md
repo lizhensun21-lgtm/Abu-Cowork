@@ -1,7 +1,8 @@
 # Abu Enterprise Build
 
-Abu-opensource produces an OSS build by default (personal mode + enterprise mode protocol layer).
-The official Abu Enterprise binary additionally incorporates the `@abu/enterprise-modules` closed-source plugin.
+Abu-opensource produces a personal-mode OSS build by default. The official Abu
+Enterprise binary incorporates the complete `@abu/enterprise-modules`
+closed-source client implementation at compile time.
 
 ## Sibling Repository Layout
 
@@ -11,24 +12,33 @@ Abu/
 └── Abu-enterprise-modules/               # private (clone separately)
 ```
 
-## Build
+## Electron-only Development and Build
+
+Electron is the only shell for new feature development, debugging, and
+acceptance. `src-tauri/` remains only for compatibility with already shipped
+versions, migration, and rollback evidence. Do not use it to develop or accept
+new functionality.
 
 ```bash
-# OSS dev
-cd Abu-opensource && npm run dev
+# First use in an OSS worktree
+cd Abu-opensource && npm run setup:electron-dev
 
-# Enterprise dev
-cd Abu-opensource && npm run dev:enterprise
+# First use in an Enterprise worktree
+cd Abu-opensource && npm run setup:electron-dev:enterprise
 
-# Tauri OSS dev
-cd Abu-opensource && npm run tauri:dev
+# OSS Electron desktop development
+cd Abu-opensource && npm run electron:dev
 
-# Tauri Enterprise dev
-cd Abu-opensource && npm run tauri:dev:enterprise
+# Enterprise Electron desktop development
+cd Abu-opensource && npm run electron:dev:enterprise
 
-# Production Enterprise
-cd Abu-opensource && npm run tauri:build:enterprise
+# Production Electron package
+cd Abu-opensource && npm run dist:electron
 ```
+
+Both Electron development commands rebuild the renderer for the intended
+target before launching. This prevents a previous Enterprise build from being
+mistaken for OSS, or an OSS renderer from being mistaken for Enterprise.
 
 ## Enterprise Build Smoke Verification (manual steps, run by Shawn)
 
@@ -43,24 +53,45 @@ ABU_BUILD_TARGET=enterprise npx tsc -p tsconfig.json --noEmit
 # 3. OSS tests (all passing)
 npm test
 
-# 4. Enterprise dev server smoke (requires Abu-enterprise-modules as a sibling directory)
-npm run dev:enterprise
-# Open in browser → switch to enterprise mode → KbBrowser / SkillTab / MCPTab /
-# MeTransparencyView should all appear (requires connection to Abu Console)
+# 4. Electron dependency/runtime preflight
+npm run electron:dev:check
+
+# 5. Real Enterprise Electron smoke (requires Abu-enterprise-modules as a sibling directory)
+npm run electron:dev:enterprise
+# In the Electron window → switch to enterprise mode → verify Skill / Agent / MCP
+# personal and organization sources plus the affected execution path.
 ```
+
+A browser-only dev server, unit tests, or a renderer build does not count as
+desktop acceptance. A feature is complete only after the real Electron shell
+starts and the affected user journey is exercised.
+
+## Runtime entitlement boundary
+
+The desktop revalidates its enterprise session before loading private modules.
+Enterprise Skill, Agent, MCP, and KB capabilities are usable only while the server
+reports a signed, unexpired License for the bound organization and the matching
+module. Offline, expired, mismatched, or missing-module states fail closed:
+installed enterprise Skills are filtered from runtime lookup, enterprise MCP
+invocations are rejected and connections are withdrawn, managed Agents are
+removed from runtime lookup, and the KB tool is
+unregistered. Local installation metadata is retained so a valid renewal can
+restore the capability without reinstalling it. Personal Skill/MCP behavior is
+not affected.
 
 ## What's in / out of OSS
 
 | Feature | OSS | Enterprise |
 |---|---|---|
 | Personal mode (personal LLM key / Skill / MCP) | ✅ | ✅ |
-| Enterprise mode bind flow (device flow + SSO redirect) | ✅ | ✅ |
-| Enterprise brand badge / status display | ✅ | ✅ |
-| Enterprise LLM gateway routing | ✅ | ✅ |
-| Policy confirm modal (default UI) | ✅ | ✅ |
+| Enterprise mode bind flow (device flow + SSO redirect) | ✗ | ✅ |
+| Enterprise brand badge / status display | ✗ | ✅ |
+| Enterprise LLM gateway routing | ✗ | ✅ |
+| Policy confirm modal | ✗ | ✅ |
 | KB Browser (enterprise knowledge base UI) | ✗ | ✅ |
 | Skill Marketplace enterprise tab | ✗ | ✅ |
 | MCP Marketplace enterprise tab | ✗ | ✅ |
+| Managed Agent templates (assigned, read-only, no local install) | ✗ | ✅ |
 | /me transparency page | ✗ | ✅ |
 | Migration wizard (personal → enterprise) | ✗ | ✅ |
 | Agent kb_query tool | ✗ | ✅ |
@@ -69,17 +100,19 @@ npm run dev:enterprise
 
 ```
 Abu-opensource/
-├── src/enterprise-modules-stub/   # OSS build stub (empty init)
-│   └── index.ts
+├── src/core/enterprise/           # host contracts + compile-time bridges only
+├── src/enterprise-modules-stub/   # personal-mode no-op implementation
+│   └── index.ts                   # mirrors the private package export contract
 └── vite.config.ts                 # ABU_BUILD_TARGET → @enterprise-modules alias
 
 Abu-enterprise-modules/
 └── src/
-    ├── index.ts                   # initEnterpriseModules() + side-effect imports
-    ├── components/                # KbBrowser, SkillTab, McpTab, MeTransparency, MigrationWizard
-    ├── core/                      # kb-sync, skill-installer, mcp-installer, migration
+    ├── index.ts                   # complete private runtime export surface
+    ├── components/                # login, brand, policy, KB, Skill, Agent, MCP and employee UI
+    ├── core/enterprise/           # auth, binding, heartbeat, gateway and policy
+    ├── core/                      # KB/Skill/Agent/MCP sync, installers and migration
     ├── tools/                     # enterprise-kb-query (agent tool)
-    └── stores/                    # enterpriseKbStore, enterpriseSkillStore, enterpriseMcpStore
+    └── stores/                    # organization mode and enterprise catalog state
 ```
 
 ## Notes for Enterprise CI

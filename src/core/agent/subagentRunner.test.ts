@@ -8,7 +8,7 @@
  * exactly once" / "capture the ONE registered tool.invoke handler" tests
  * need that isolation.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { SubagentDefinition } from '../../types';
 
 // ── Mocked dependencies (thin forwarding factories over stable outer
@@ -124,6 +124,15 @@ async function importFresh() {
 }
 
 describe('subagentRunner', () => {
+  // Same cold-transform hazard as agentLoopRunner.test.ts: left in the first
+  // test body, the first importFresh() here measured 2.7 s against the 5 s
+  // testTimeout — and a timed-out body is not cancelled, so it keeps mutating
+  // the shared mocks after vitest has moved on. Pay it under the 30 s
+  // hookTimeout instead.
+  beforeAll(async () => {
+    await import('./subagentRunner');
+  });
+
   beforeEach(() => {
     getSidecarStatus.mockReset();
     sidecarRequestMock.mockReset();
@@ -189,6 +198,57 @@ describe('subagentRunner', () => {
       expect(result.toolCallCount).toBe(2);
       expect(result.turnCount).toBe(3);
       expect(result.tokenUsage).toEqual({ input: 10, output: 20 });
+    });
+
+    it('uses the parent run settings snapshot for both subagent credentials and sidecar model selection', async () => {
+      getSidecarStatus.mockReturnValue('running');
+      sidecarRequestMock.mockResolvedValue({
+        text: 'sidecar result',
+        toolCallCount: 0,
+        turnCount: 1,
+        tokenUsage: { input: 1, output: 1 },
+        duration: 1,
+      });
+      const parentSettings = {
+        activeModel: { providerId: 'parent-provider', modelId: 'parent-model' },
+        providers: [{ id: 'parent-provider', apiKey: 'parent-key', baseUrl: 'https://parent.test' }],
+      };
+      const parentReader = { getSnapshot: () => parentSettings };
+      getActiveApiKeyMock.mockImplementation((settings: unknown) => {
+        expect(settings).toBe(parentSettings);
+        return 'parent-key';
+      });
+      getActiveProviderMock.mockImplementation((settings: unknown) => {
+        expect(settings).toBe(parentSettings);
+        return { id: 'parent-provider', baseUrl: 'https://parent.test', apiFormat: 'openai-compatible' };
+      });
+      resolveEffectiveLlmCredsMock.mockImplementation((apiKey: string, baseUrl: string | undefined) => ({
+        apiKey,
+        baseUrl,
+        forceOpenAiCompatible: false,
+      }));
+      const { getSubagentRunInheritance, runSubagent } = await importFresh();
+
+      expect(getSubagentRunInheritance({
+        conversationId: 'conv-parent',
+        settingsReader: parentReader as never,
+      })).toEqual({
+        parentConversationId: 'conv-parent',
+        settingsReader: parentReader,
+      });
+
+      await runSubagent({ agent, task: 'do the thing', settingsReader: parentReader as never });
+
+      const params = sidecarRequestMock.mock.calls[0][1] as {
+        settingsSnapshot: unknown;
+        resolvedCreds: unknown;
+      };
+      expect(params.settingsSnapshot).toBe(parentSettings);
+      expect(params.resolvedCreds).toEqual({
+        apiKey: 'parent-key',
+        baseUrl: 'https://parent.test',
+        forceOpenAiCompatible: false,
+      });
     });
 
     it('falls back to runSubagentLoop when the dispatch-time projection fails (e.g. resolveEffectiveLlmCreds throws) — session never registered, sidecar never touched', async () => {

@@ -56,6 +56,38 @@ These rules are **mandatory** for every new test:
 Global Tauri API mocks live in `src/test/setup.ts` and are applied automatically to every test file.
 Add new Tauri plugin mocks there rather than per-test.
 
+### Heavy module loading belongs in `beforeAll`, never in the first test body
+
+`vitest.config.ts` deliberately leaves `testTimeout` at the default **5 s** so hung tests fail
+fast, and sets `hookTimeout: 30000` so setup gets headroom. That split is a trap for any file
+whose tests re-import a large module graph.
+
+`vi.resetModules()` drops the *evaluated-module* cache but **not** Vite's *transform* cache, so
+the FIRST import of a graph pays the whole cold transform and every later one is cheap. Measured
+in `agentLoopRunner.test.ts`: first import **4012 ms**, second **9 ms**, rest 9-845 ms. Left in
+the first test's body, that 4 s crosses the 5 s ceiling as soon as a second worker transforms
+concurrently or v8 coverage is on — which is exactly what made four tests randomly red in
+`npm run verify` (fixed 2026-08-21).
+
+It does not stay a one-test failure. **Vitest does not cancel a test body that has timed out** —
+the abandoned continuation resumes later and runs against whatever test is live by then, *after*
+that test's `beforeEach` already reset the shared mocks. One slow test became three or four
+unrelated red assertions with impossible-looking symptoms (a handler registered twice, a mock
+recording zero calls).
+
+Rules:
+
+- **Warm the graph in `beforeAll`**, not in the first `it()`. It runs under the 30 s
+  `hookTimeout`, and the transform cache it fills is reused by every later `vi.resetModules()`.
+  This applies to a lazily `await import()`ed hot path too, not just an explicit `importFresh()`
+  helper — see `agentPipeline.integration.test.ts`.
+- **When capturing a handler out of a shared registration mock, take the newest match**
+  (`calls.findLast(...)` / `calls.at(-1)`), never `calls.find(...)` / `calls[0]`. The running
+  test always registers last, so this makes a leaked stale registration harmless.
+- Before blaming cross-file pollution for this shape of failure, check per-test durations with
+  `npx vitest run --reporter=verbose` and look for a body near 5000 ms. As of this writing the
+  slowest body in the whole suite is 1946 ms; anything approaching 5 s is the bug.
+
 **Flaky test quarantine:** If a test is found to be flaky (non-deterministic failure), open a
 GitHub issue tagged `flaky-test` and move the test into `src/__tests__/quarantine/` with a
 `// QUARANTINED: <issue-url>` comment. Quarantined tests are excluded from CI gates but included
@@ -126,6 +158,29 @@ See `vitest.config.ts → test.coverage.thresholds` for current values.
 ---
 
 ## 6. Writing Tests — Conventions
+
+### Test environment — `node` by default, DOM is opt-in
+
+`vitest.config.ts` sets `environment: 'node'`. Only ~66 of ~386 test files actually need a DOM, and
+building a happy-dom per file cost more than running the tests: over the 340 non-`.tsx` files the
+`environment` phase alone was **187.80 s → 0.44 s**, and full-suite wall time went **~71-75 s →
+~42-55 s** (the `tests` phase itself was unchanged — it was all per-file setup overhead).
+
+**A test that touches the DOM must opt back in** with a docblock on its *first line*:
+
+```ts
+// @vitest-environment happy-dom
+import { render } from '@testing-library/react'
+```
+
+Required for every `*.test.tsx`, and for any `*.test.ts` that touches `document`/`window`,
+Storage, selection, or DOM events (currently 20 files — stores with persist, `hooks/`,
+`features/reference/`, `core/notice/`, `sidecarManager`, `frameApplier`, `chatDelta`,
+`tauriFetch`, `petStatusBridge`, `PptxPreview`).
+
+🔴 A new component test **without** that line fails on `document is not defined`. Add the docblock —
+do **not** flip the global default back; that re-imposes the happy-dom cost on all ~320 DOM-free
+files. `src/test/setup.ts` already polyfills `localStorage`, so Zustand `persist` works under `node`.
 
 ### Store tests
 

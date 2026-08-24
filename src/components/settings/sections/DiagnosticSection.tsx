@@ -8,6 +8,7 @@ import type { CheckCategory, CheckResult } from '@/core/diagnostic/types';
 import DiagnosticBanner from './diagnostic/DiagnosticBanner';
 import DiagnosticCategory from './diagnostic/DiagnosticCategory';
 import SettingsSectionHeader from '@/components/settings/SettingsSectionHeader';
+import { Toggle } from '@/components/ui/toggle';
 
 const CATEGORY_ICON = {
   'ai-services': Bot,
@@ -24,12 +25,21 @@ export default function DiagnosticSection() {
   const lastCheckedAt = useDiagnosticStore((s) => s.lastCheckedAt);
   const isChecking = useDiagnosticStore((s) => s.isChecking);
   const runAll = useDiagnosticStore((s) => s.runAll);
+  const refreshApp = useDiagnosticStore((s) => s.refreshApp);
   const setActiveSystemTab = useSettingsStore((s) => s.setActiveSystemTab);
+  const telemetryOptOut = useSettingsStore((s) => s.telemetryOptOut);
+  const setTelemetryOptOut = useSettingsStore((s) => s.setTelemetryOptOut);
 
-  // Auto-run on first visit if no cached results.
+  // First visit (no cached results): run the full suite. Otherwise the panel
+  // renders the persisted snapshot instantly, but that snapshot can be stale —
+  // notably the app version froze at whatever build ran the last full check, so
+  // an in-place update kept showing the old version + "已是最新". The app check
+  // is cheap and always-current, so refresh just that item on every open.
   useEffect(() => {
     if (lastCheckedAt === null && !isChecking) {
       runAll();
+    } else {
+      refreshApp();
     }
   // run-once on mount; deps intentionally empty
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -77,6 +87,23 @@ export default function DiagnosticSection() {
             results={grouped[cat]}
           />
         ))}
+      </div>
+
+      {/* Anonymous reporting opt-out. Sits at the bottom with the other
+          send-data affordances: most people never touch it, so it should not
+          outrank the diagnostic results this page exists to show. Personal
+          installs previously had no way to turn reporting off at all — only a
+          build-time constant and, for enterprise, a server-side flag. */}
+      <div className="pt-2 border-t border-[var(--abu-border)] flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <p className="text-minor text-[var(--abu-text-primary)]">{t.diagnostic.telemetryOptOut}</p>
+          <p className="text-minor text-[var(--abu-text-muted)] mt-0.5">{t.diagnostic.telemetryOptOutDesc}</p>
+        </div>
+        <Toggle
+          checked={!telemetryOptOut}
+          onChange={() => setTelemetryOptOut(!telemetryOptOut)}
+          size="sm"
+        />
       </div>
 
       {/* Feedback navigation prompt */}

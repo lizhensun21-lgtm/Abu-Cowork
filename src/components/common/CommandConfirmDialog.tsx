@@ -2,12 +2,20 @@ import { useEffect, useCallback } from 'react';
 import { AlertTriangle, ShieldAlert, ShieldX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { mayOfferPersistentGrant } from '@/core/permissions/alwaysAskPolicy';
 import type { DangerLevel } from '@/core/tools/commandSafety';
 
 export interface CommandConfirmRequest {
   command: string;
   level: DangerLevel;
   reason: string;
+  /** Selects the wording — see ConfirmationInfo.kind. */
+  kind?: 'command' | 'browser' | 'self-extension';
+  /** Browser confirmations: exact origin of the action, when resolved. */
+  browserOrigin?: string;
+  /** Browser confirmations: whether "always allow this site" may be offered. */
+  allowPersistentGrant?: boolean;
 }
 
 interface CommandConfirmDialogProps {
@@ -60,6 +68,35 @@ export default function CommandConfirmDialog({
   const config = levelConfig[request.level];
   const Icon = config.icon;
   const isBlocked = request.level === 'block';
+  // "Always allow this site": persist the verdict, then resolve like a normal
+  // confirm. The persistent grant is the dialog's own side effect — the
+  // approval pipeline stays a plain boolean.
+  // `allowPersistentGrant` is the requester's ceiling; `mayOfferPersistentGrant`
+  // is the floor that high-consequence actions can never rise above. Both must
+  // agree before a "forever" button appears.
+  const offerSiteGrant =
+    request.kind === 'browser' && !!request.browserOrigin && mayOfferPersistentGrant(request);
+  const handleAlwaysAllowSite = useCallback(() => {
+    if (request.browserOrigin) {
+      useSettingsStore.getState().setBrowserSitePermission(request.browserOrigin, 'allowed');
+    }
+    onConfirm();
+  }, [request.browserOrigin, onConfirm]);
+
+  // "Block this site" is the mirror of "always allow", and it is offered
+  // wherever an origin is known — including the cases that may NOT be granted
+  // permanently (scripting tools, block-level actions). Tightening is always
+  // safe to make one click away; the asymmetry is deliberate, since the only
+  // way a user can currently stop being asked is to approve.
+  const offerSiteBlock = request.kind === 'browser' && !!request.browserOrigin;
+  const handleBlockSite = useCallback(() => {
+    if (request.browserOrigin) {
+      useSettingsStore.getState().setBrowserSitePermission(request.browserOrigin, 'denied');
+    }
+    // Blocking also refuses the pending action — the user said "not this site",
+    // which necessarily includes the request they are looking at.
+    onCancel();
+  }, [request.browserOrigin, onCancel]);
 
   // Close on Escape key
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -74,7 +111,7 @@ export default function CommandConfirmDialog({
   }, [handleKeyDown]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div data-electron-no-drag className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-md mx-4 bg-[var(--abu-bg-base)] rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
         {/* Header */}
         <div className="relative px-6 pt-6 pb-4 shrink-0">
@@ -91,10 +128,18 @@ export default function CommandConfirmDialog({
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-h-md font-semibold text-[var(--abu-text-primary)]">
-                {t.commandConfirm[config.titleKey]}
+                {request.kind === 'browser'
+                  ? t.commandConfirm.browserTitle
+                  : request.kind === 'self-extension'
+                    ? t.commandConfirm.selfExtensionTitle
+                    : t.commandConfirm[config.titleKey]}
               </h2>
               <p className="text-body text-[var(--abu-text-tertiary)] mt-0.5">
-                {t.commandConfirm[config.descKey]}
+                {request.kind === 'browser'
+                  ? t.commandConfirm.browserDescription
+                  : request.kind === 'self-extension'
+                    ? t.commandConfirm.selfExtensionDescription
+                    : t.commandConfirm[config.descKey]}
               </p>
             </div>
           </div>
@@ -123,7 +168,8 @@ export default function CommandConfirmDialog({
         </div>
 
         {/* Actions */}
-        <div className="flex gap-3 px-6 py-6 shrink-0 border-t border-[var(--abu-bg-muted)]">
+        <div className="flex flex-col gap-3 px-6 py-6 shrink-0 border-t border-[var(--abu-bg-muted)]">
+          <div className="flex gap-3">
           <Button
             variant="outline"
             onClick={onCancel}
@@ -140,7 +186,34 @@ export default function CommandConfirmDialog({
                   : 'bg-[var(--abu-text-primary)] hover:bg-[var(--abu-text-secondary)]'
               } text-white`}
             >
-              {t.commandConfirm.confirm}
+              {offerSiteGrant ? t.commandConfirm.browserAllowOnce : t.commandConfirm.confirm}
+            </Button>
+          )}
+          {!isBlocked && offerSiteGrant && (
+            // The more consequential choice stays visually secondary: the
+            // conversation-scoped button keeps the primary styling so the
+            // safer default is the visually dominant one.
+            <Button
+              variant="outline"
+              onClick={handleAlwaysAllowSite}
+              className="flex-1 h-10 text-body border-[var(--abu-border-hover)] hover:bg-[var(--abu-bg-muted)]"
+              title={request.browserOrigin}
+            >
+              {t.commandConfirm.browserAlwaysAllowSite}
+            </Button>
+          )}
+          </div>
+          {offerSiteBlock && (
+            // Second row, ghost styling: a standing block is consequential but
+            // never the action we nudge toward, so it stays visually quiet
+            // while remaining reachable without leaving the dialog.
+            <Button
+              variant="ghost"
+              onClick={handleBlockSite}
+              className="h-8 w-full text-minor text-[var(--abu-danger)] hover:bg-[var(--abu-danger-bg)]"
+              title={request.browserOrigin}
+            >
+              {t.commandConfirm.browserBlockSite}
             </Button>
           )}
         </div>

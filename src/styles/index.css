@@ -21,8 +21,44 @@
   user-select: none;
 }
 
+/* Escape valve. macOS has no chrome row of its own: the content card starts 8px
+   below the window top, so the band beside the traffic lights IS the card, and
+   the blanket rule below would otherwise make it permanently undraggable. A row
+   marked `data-electron-drag` opts back into the drag lane even inside a
+   no-drag card; its children stay no-drag through the `:not()` below, so
+   titles and buttons in that row keep working without per-element marking.
+   The `:not()` is load-bearing — without it both rules match at (0,1,0) with
+   !important and the winner would depend on source order. */
+[data-electron-drag] {
+  -webkit-app-region: drag !important;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 [data-electron-no-drag],
-[data-electron-no-drag] * {
+[data-electron-no-drag] *:not([data-electron-drag]) {
+  -webkit-app-region: no-drag !important;
+}
+
+/* Interactive descendants of ANY drag region are never draggable. Competitor
+   desktop apps ship the same backstop (ChatGPT: `.draggable button{no-drag}`),
+   and it covers drag rows that sit outside a no-drag card, where the rule above
+   does not reach. */
+[data-tauri-drag] :where(button, a, input, textarea, select, [role="button"], [contenteditable]),
+[data-tauri-drag-region] :where(button, a, input, textarea, select, [role="button"], [contenteditable]),
+[data-electron-drag] :where(button, a, input, textarea, select, [role="button"], [contenteditable]) {
+  -webkit-app-region: no-drag !important;
+}
+
+/* Every layer that paints ABOVE the window chrome must carve itself out of the
+   drag lanes. `-webkit-app-region` is an OS-level geometry union that ignores
+   z-index: a drag lane underneath an overlay keeps swallowing its clicks
+   (Windows turns them into window moves), so a modal whose close button lands
+   in the top chrome band is simply dead. Overlays we author declare
+   `data-electron-no-drag` on their root; these selectors cover the layers that
+   escape the React tree into `document.body`, where no ancestor can mark them. */
+[data-radix-popper-content-wrapper],
+[data-radix-popper-content-wrapper] * {
   -webkit-app-region: no-drag !important;
 }
 
@@ -175,6 +211,52 @@
 }
 .typing-dot:nth-child(2) { animation-delay: 0.15s; }
 .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+/* Expand/collapse for the live step timeline / streaming thinking pane.
+   Grid trick (same pattern claude.ai ships): grid-template-rows 0fr↔1fr on a
+   container with exactly ONE child whose min-height is 0; the container's own
+   overflow:hidden clips mid-animation. Deliberately NOT setting overflow on
+   the child — it may be (or contain) its own scroll area (max-h + overflow-y).
+
+   Two motion paths:
+   - .block-expand-enter (animation): plays once on MOUNT, for content that
+     appears mid-stream already open. Without it the full height lands in one
+     layout pass and the pinned bottom-stick shifts the view up in one frame.
+   - open/closed classes (transition): state toggles AFTER mount. Crucially the
+     collapsing content stays mounted and gets rolled up (clipped) over 280ms —
+     unmount-then-animate reads as the content blinking away, which is exactly
+     the completion jump this replaces. */
+.block-expand {
+  display: grid;
+  overflow: hidden;
+  transition: grid-template-rows 280ms ease-out;
+}
+.block-expand > * {
+  min-height: 0;
+}
+.block-expand-open {
+  grid-template-rows: 1fr;
+}
+.block-expand-closed {
+  grid-template-rows: 0fr;
+}
+.block-expand-enter {
+  animation: block-expand-enter 200ms ease-out;
+}
+@keyframes block-expand-enter {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .block-expand {
+    transition: none;
+  }
+  .block-expand-enter {
+    animation: none;
+  }
+}
 
 /* Update activity before byte totals are known and while the downloaded
    package is being verified. The segment sweeps continuously so slow network

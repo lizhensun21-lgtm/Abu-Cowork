@@ -31,6 +31,7 @@ import { generateCompletionMessage } from '@/utils/workflowExtractor';
 import { getToolLabel } from '@/utils/toolLabels';
 import { useTaskExecutionStore } from '@/stores/taskExecutionStore';
 import DetailBlockView from './DetailBlockView';
+import { TypingDots } from './ThinkingStatusLine';
 
 // Unified step type for rendering
 export type UnifiedStep = {
@@ -143,15 +144,18 @@ export function generateSummary(
   }
 
   // Thinking is its own standalone block now — the collapsed header is the only
-  // line, so surface the duration ("思考了 N 秒") at a glance; fall back to the
-  // topic label when duration is unknown (still streaming).
+  // line, so surface the duration ("思考了 N 秒") at a glance. While the block
+  // is still live the label must be "思考中", CONTINUING the placeholder dots
+  // row it replaces mid-stream (same words, same spot — the trailing …/... is
+  // stripped by the active header before its animated dots); "思考过程" is only
+  // for settled blocks whose duration got lost (old persisted history).
   const thinkingStep = steps.find((s) => s.type === 'thinking');
   const onlyThinking = thinkingStep && readCount + writeCount + createCount + commandCount + otherCount === 0 && !skillStep;
   if (onlyThinking) {
     actions.push(
       thinkingStep.duration != null
         ? format(t.task.thoughtFor, { seconds: thinkingStep.duration })
-        : t.chat.thinkingProcess,
+        : isActive ? t.chat.thinking : t.chat.thinkingProcess,
     );
   }
 
@@ -286,6 +290,21 @@ export default function TaskBlock({ steps, executionSteps, isActive, isStopped =
 
   // Determine which steps to display based on mode
   const isOpen = displayMode !== 'collapsed';
+  // Timeline mount gate. Blocks that mount already collapsed (history rows
+  // remounting during virtualized scrolling) never render the timeline at all
+  // — no DOM cost, no risk of a mount animation. But once the timeline HAS
+  // been open, collapsing keeps it mounted at grid-rows 0fr so the close is a
+  // 280ms roll-up (see .block-expand in index.css). Unmounting here instead
+  // made the auto-collapse when the answer starts streaming read as the whole
+  // thinking/step block blinking away in one frame.
+  // Monotonic latch (false→true) via the render-phase state adjustment
+  // pattern: the latch must flip in the SAME render that opens the timeline
+  // (an effect would paint the first open one frame without it), and it must
+  // be STATE, not a ref mutated during render — ref writes aren't tied to
+  // commit, so a discarded concurrent render could latch it for a timeline
+  // that never showed (also react-hooks/refs forbids it).
+  const [timelineEverOpened, setTimelineEverOpened] = useState(isOpen);
+  if (isOpen && !timelineEverOpened) setTimelineEverOpened(true);
   const needsTruncation = unifiedSteps.length > PREVIEW_LIMIT;
   const visibleSteps = (displayMode === 'preview' && needsTruncation)
     ? unifiedSteps.slice(0, PREVIEW_LIMIT)
@@ -334,13 +353,7 @@ export default function TaskBlock({ steps, executionSteps, isActive, isStopped =
           className="flex items-center gap-1.5 text-body text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] transition-colors mb-2"
         >
           <span>{isActive ? summary.replace(/\.{3}$/, '').replace(/…$/, '') : summary}</span>
-          {isActive && (
-            <span className="inline-flex items-center gap-[3px] ml-0.5">
-              <span className="typing-dot w-[3px] h-[3px] rounded-full bg-[var(--abu-clay)]" />
-              <span className="typing-dot w-[3px] h-[3px] rounded-full bg-[var(--abu-clay)]" />
-              <span className="typing-dot w-[3px] h-[3px] rounded-full bg-[var(--abu-clay)]" />
-            </span>
-          )}
+          {isActive && <TypingDots size="sm" className="ml-0.5" />}
           <ChevronDown
             className={cn(
               'h-3.5 w-3.5 transition-transform',
@@ -350,8 +363,22 @@ export default function TaskBlock({ steps, executionSteps, isActive, isStopped =
         </button>
       )}
 
-      {/* Flow Timeline */}
-      {isOpen && visibleSteps.length > 0 && (
+      {/* Flow Timeline. block-expand-enter animates the height open when this
+          mounts mid-stream (the "思考中" dots swapping to the first thinking/
+          tool step while pinned to the bottom must not land in one frame);
+          open/closed classes roll it up/down on later toggles — including the
+          auto-collapse when the answer starts streaming — while the content
+          stays mounted (inert + hidden from a11y when closed). */}
+      {timelineEverOpened && visibleSteps.length > 0 && (
+        <div
+          inert={!isOpen || undefined}
+          aria-hidden={!isOpen || undefined}
+          className={cn(
+            'block-expand',
+            isOpen ? 'block-expand-open' : 'block-expand-closed',
+            'block-expand-enter',
+          )}
+        >
         <div className="flow-timeline pl-1">
           {visibleSteps.map((step, index) => {
             const isLastVisible = index === visibleSteps.length - 1;
@@ -464,6 +491,7 @@ export default function TaskBlock({ steps, executionSteps, isActive, isStopped =
             </div>
           )}
         </div>
+        </div>
       )}
     </div>
   );
@@ -524,6 +552,13 @@ function TaskStepItem({ step, showConnector, hasLaterToolStep, locale, t }: {
     }
     prevThinkingRunning.current = isRunning;
   }, [isThinking, isRunning]);
+  // Latches true once this step's thinking pane has rendered in its streaming
+  // state (set-state-during-render derived-state pattern). The completed-state
+  // toggle button animates open only when it replaces the live pane (running →
+  // completed swap in this mounted component); history/remount renders show it
+  // statically.
+  const [thinkingRanLive, setThinkingRanLive] = useState(false);
+  if (isThinking && isRunning && !thinkingRanLive) setThinkingRanLive(true);
 
   // Once thinking is done and execution has moved on to a tool step, auto-collapse
   // the reasoning so attention shifts to the running work. Fires once; the user can
@@ -576,41 +611,63 @@ function TaskStepItem({ step, showConnector, hasLaterToolStep, locale, t }: {
   // collapsible once the thinking phase is done (preserves expanded state from streaming).
   const renderThinkingDetail = () => {
     if (!isThinking || !step.detail) return null;
-    if (isRunning) {
-      return (
-        <div className="mt-1 rounded-lg bg-[var(--abu-bg-muted)] border border-[var(--abu-bg-hover)] overflow-hidden">
-          <div ref={thinkingScrollRef} className="px-3 py-2 max-h-48 overflow-y-auto">
-            <pre className="text-minor text-[var(--abu-text-tertiary)] italic whitespace-pre-wrap break-words leading-relaxed font-sans m-0">
-              {step.detail}
-              <span className="streaming-cursor inline-block ml-0.5" />
-            </pre>
+    if (!isRunning && !isCompleted) return null;
+    const panelOpen = isRunning || thinkingExpanded;
+    return (
+      // Running and completed share ONE skeleton (toggle-button slot above a
+      // block-expand panel) so the running → completed swap mutates classes on
+      // mounted nodes instead of replacing the subtree — the old two-structure
+      // version landed a ~24px height change in one frame (below
+      // SmoothHeight's 40px threshold), a small residual hop. Now the button
+      // slot grows in via block-expand-enter and the panel — kept mounted —
+      // rolls up/down over the shared 280ms transition on later toggles,
+      // including the auto-collapse when execution moves on to a tool step.
+      <div className="mt-1">
+        {isCompleted && (
+          <div
+            className={cn(
+              'block-expand block-expand-open',
+              thinkingRanLive && 'block-expand-enter',
+            )}
+          >
+            {/* pb-2 (the button→panel gap) sits inside the animated slot so it
+                grows in with the button instead of jumping in separately. */}
+            <div className="pb-2">
+              <button
+                onClick={() => setThinkingExpanded(!thinkingExpanded)}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption bg-[var(--abu-bg-hover)] text-[var(--abu-text-muted)] hover:bg-[var(--abu-bg-pressed)] hover:text-[var(--abu-text-tertiary)] transition-colors"
+              >
+                {thinkingExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {t.chat.thinkingProcess}
+              </button>
+            </div>
+          </div>
+        )}
+        {/* block-expand-enter while running: the pane can first mount inside
+            an ALREADY open timeline (a later turn's thinking starting after
+            tool steps), where the timeline-level mount animation won't fire —
+            so the pane animates its own height open too. Same one-frame-jump
+            rationale as the timeline wrapper above. */}
+        <div
+          inert={!panelOpen || undefined}
+          aria-hidden={!panelOpen || undefined}
+          className={cn(
+            'block-expand',
+            panelOpen ? 'block-expand-open' : 'block-expand-closed',
+            isRunning && 'block-expand-enter',
+          )}
+        >
+          <div className="rounded-lg bg-[var(--abu-bg-muted)] border border-[var(--abu-bg-hover)] overflow-hidden">
+            <div ref={thinkingScrollRef} className="px-3 py-2 max-h-48 overflow-y-auto">
+              <pre className="text-minor text-[var(--abu-text-tertiary)] italic whitespace-pre-wrap break-words leading-relaxed font-sans m-0">
+                {step.detail}
+                {isRunning && <span className="streaming-cursor inline-block ml-0.5" />}
+              </pre>
+            </div>
           </div>
         </div>
-      );
-    }
-    if (isCompleted) {
-      return (
-        <div className="mt-1">
-          <button
-            onClick={() => setThinkingExpanded(!thinkingExpanded)}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption bg-[var(--abu-bg-hover)] text-[var(--abu-text-muted)] hover:bg-[var(--abu-bg-pressed)] hover:text-[var(--abu-text-tertiary)] transition-colors"
-          >
-            {thinkingExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            {t.chat.thinkingProcess}
-          </button>
-          {thinkingExpanded && (
-            <div className="mt-2 rounded-lg bg-[var(--abu-bg-muted)] border border-[var(--abu-bg-hover)] overflow-hidden">
-              <div className="px-3 py-2 max-h-48 overflow-y-auto">
-                <pre className="text-minor text-[var(--abu-text-tertiary)] italic whitespace-pre-wrap break-words leading-relaxed font-sans m-0">
-                  {step.detail}
-                </pre>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    return null;
+      </div>
+    );
   };
 
   // Render legacy collapsible details (backward compatibility)

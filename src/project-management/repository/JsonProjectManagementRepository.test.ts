@@ -98,7 +98,7 @@ describe('Project Management persistence format', () => {
 
   it('rejects malformed JSON, unsupported versions, and invalid relations', () => {
     expect(() => parsePersistedProjectManagementData('{')).toThrow('malformed JSON');
-    expect(() => parsePersistedProjectManagementData(JSON.stringify({ formatVersion: 2, savedAt: new Date().toISOString(), graph: graph() }))).toThrow('Unsupported');
+    expect(() => parsePersistedProjectManagementData(JSON.stringify({ formatVersion: 2, savedAt: '2026-08-17T00:00:00.000Z', graph: graph() }))).toThrow('Unsupported');
     const invalid = graph();
     invalid.milestones[0].timelineId = 'missing';
     expect(() => serializePersistedProjectManagementData(invalid)).toThrow('failed validation');

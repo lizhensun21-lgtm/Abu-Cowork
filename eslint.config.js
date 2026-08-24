@@ -6,10 +6,11 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  // `.wt-*/` are nested git worktrees (feature branches) checked out inside the
-  // repo. Each carries its own tsconfig, which makes typescript-eslint find
-  // multiple candidate TSConfig roots and fail to parse EVERY file. Ignore them
-  // so local `eslint .` matches a clean CI checkout (which has no worktrees).
+  // `.wt-*/` and `.claude/worktrees/` are nested git worktrees (feature branches)
+  // checked out inside the repo. Each carries its own tsconfig, which makes
+  // typescript-eslint find multiple candidate TSConfig roots and fail to parse
+  // EVERY file. Ignore them so local `eslint .` matches a clean CI checkout
+  // (which has no worktrees).
   // sidecar/index.mjs is esbuild's generated bundle output (scripts/build-sidecar.mjs)
   // — vendored dependency code inlined into it can contain eslint-disable comments
   // referencing rules this config doesn't define for non-ts/tsx files, which ESLint
@@ -23,6 +24,7 @@ export default defineConfig([
     'src-tauri',
     'coverage',
     '.wt-*/',
+    '.claude/worktrees/',
     'sidecar/index.mjs',
     'electron/browser-runtime/dist',
     'electron/chrome-bridge-runtime/dist',
@@ -119,6 +121,75 @@ export default defineConfig([
         { name: 'alert', message: 'sidecar runs in Node — no DOM.' },
         { name: 'confirm', message: 'sidecar runs in Node — no DOM.' },
         { name: 'prompt', message: 'sidecar runs in Node — no DOM.' },
+      ],
+    },
+  },
+  // Determinism guardrail for vitest unit tests (TESTING.md §3 "Determinism
+  // Constraints") — real Date.now() / bare `new Date()` / Math.random() /
+  // crypto.randomUUID() calls make a test's outcome depend on wall-clock time
+  // or OS entropy, so the same test can pass or fail differently between
+  // runs. Ban the real call sites; require freezing a fixed value instead
+  // (vi.useFakeTimers()+vi.setSystemTime(), a hardcoded constant, or
+  // vi.spyOn(...).mockReturnValue(<fixed value>)).
+  //
+  // NOTE on scope: `no-restricted-syntax` rule VALUES are replaced (not
+  // merged) per-rule-name across flat-config blocks that match the same
+  // file (verified empirically — ESLint v10 flat config does not
+  // concatenate array-valued rule options from multiple matching configs).
+  // Since this block's `files` glob is a subset of the base
+  // `**/*.{ts,tsx}` block above, the base block's typography/color-token
+  // selectors are repeated here so test files keep both guardrails instead
+  // of silently losing the earlier ones.
+  //
+  // Legitimate mock patterns are NOT flagged: `vi.spyOn(Date, 'now')` and
+  // `vi.setSystemTime(fixedDate)` pass `Date`/`'now'` as arguments (a
+  // MemberExpression/Identifier + Literal), not a `Date.now()` call — the
+  // selectors below only match actual CallExpression/NewExpression call
+  // sites, not references to the function.
+  {
+    files: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error',
+        {
+          selector: 'Literal[value=/text-\\[[0-9.]+px\\]/]',
+          message: 'Use a font-size token (text-caption/minor/body/h-xs..h-xl) instead of an arbitrary text-[Npx] class.',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/text-\\[[0-9.]+px\\]/]',
+          message: 'Use a font-size token instead of an arbitrary text-[Npx] class (template literal).',
+        },
+        {
+          selector: 'Literal[value=/\\btext-(xs|sm|base|lg|xl|2xl|3xl)\\b/]',
+          message: 'Use a font-size token (text-minor/body/h-*) instead of Tailwind named sizes. One scale only.',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\\btext-(xs|sm|base|lg|xl|2xl|3xl)\\b/]',
+          message: 'Use a font-size token instead of Tailwind named sizes (template literal).',
+        },
+        {
+          selector: 'Literal[value=/\\b(text|bg|border|ring|fill)-(red|green|emerald|lime|amber|yellow|blue|sky|indigo|orange)-[0-9]/]',
+          message: 'Use a semantic color token (e.g. text-[var(--abu-danger)], bg-[var(--abu-success-bg)]) instead of raw Tailwind status/link colors. See CLAUDE.md §6.2.',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\\b(text|bg|border|ring|fill)-(red|green|emerald|lime|amber|yellow|blue|sky|indigo|orange)-[0-9]/]',
+          message: 'Use a semantic color token instead of raw Tailwind status/link colors (template literal). See CLAUDE.md §6.2.',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Date'][callee.property.name='now']",
+          message: 'TESTING.md §3: no real Date.now() in tests (non-deterministic). Freeze time with vi.useFakeTimers()+vi.setSystemTime(fixedDate), or use a fixed constant.',
+        },
+        {
+          selector: 'NewExpression[callee.name=\'Date\'][arguments.length=0]',
+          message: 'TESTING.md §3: no bare `new Date()` (real current time) in tests. Pass a fixed timestamp/ISO string, or use vi.useFakeTimers()+vi.setSystemTime().',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Math'][callee.property.name='random']",
+          message: "TESTING.md §3: no real Math.random() in tests (non-deterministic). Inject a seeded RNG or vi.spyOn(Math, 'random').mockReturnValue(fixedValue).",
+        },
+        {
+          selector: "CallExpression[callee.object.name='crypto'][callee.property.name='randomUUID']",
+          message: 'TESTING.md §3: no real crypto.randomUUID() in tests (non-deterministic). Stub via vi.spyOn(...).mockReturnValue(fixedId), or assert with expect.any(String).',
+        },
       ],
     },
   },

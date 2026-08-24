@@ -154,6 +154,7 @@ export interface TranslationDict {
     undo: string;
     importSession: string;
     renameConversation: string;
+    moreActions: string;
     viewScheduledTask: string;
     archiveRun: string;
     triggered: string;
@@ -483,6 +484,10 @@ export interface TranslationDict {
     inputPlaceholderWithSkill: string;
     inputPlaceholderWithAgent: string;
     inputPlaceholderMidTask: string;
+    /** Send button tooltip when Enter sends. */
+    sendTooltipEnterSends: string;
+    /** Send button tooltip when Enter inserts a newline. `{modifier}` = ⌘ / Ctrl. */
+    sendTooltipModifierSends: string;
     start: string;
     stop: string;
     welcomeTitle: string;
@@ -512,6 +517,15 @@ export interface TranslationDict {
     collapseSources: string;
     userMessageShowMore: string;
     userMessageCollapse: string;
+    runPending: string;
+    runAccepted: string;
+    runRunning: string;
+    runRecovering: string;
+    runFailed: string;
+    runConnectionFailed: string;
+    runInterrupted: string;
+    runRecoveredAfterRestart: string;
+    runRetry: string;
     noModelConfigured: string;
     scrollToBottom: string;
     compressingContext: string;
@@ -598,6 +612,8 @@ export interface TranslationDict {
     maxTurnsReached: string;
     // Agent loop no-progress guard (model stuck emitting unparseable tool calls)
     noProgressStopped: string;
+    // Agent loop semantic guard (well-formed but repetitive/meta-only calls)
+    semanticLoopStopped: string;
     // Agent loop runtime status / errors + subagent result strings (P4-C)
     /** Error: no API key configured (keep the literal "API Key" substring). */
     configureApiKey: string;
@@ -607,12 +623,21 @@ export interface TranslationDict {
     gatewayUnreachable: string;
     /** Sidecar process exited mid-task and automatic recovery has started. */
     sidecarInterrupted: string;
+    messageSaveFailed: string;
+    attachmentDuringRun: string;
+    conversationBusy: string;
     /** Model likely doesn't support image/vision input. */
     visionUnsupported: string;
     /** Ollama returned 403 Forbidden (CORS origin restriction). */
     ollamaForbidden: string;
+    /** Provider account balance/resource-package exhausted. */
+    insufficientBalance: string;
     /** Streamed-inline notice while compacting an oversized context (includes markdown). */
     compactingInlineNotice: string;
+    /** Latest user message cannot fit within the model's safe context budget. */
+    contextInputTooLarge: string;
+    /** System prompt and tool definitions leave no safe room for user input. */
+    contextFixedTooLarge: string;
     /** Conversation-title fallback used in task notifications. */
     notificationTaskFallback: string;
     /** Error after repeated output-token-limit hits (multi-line). {limit} */
@@ -654,6 +679,13 @@ export interface TranslationDict {
     /** Hint appended to not_found errors: check endpoint URL / model capabilities. */
     errorNotFoundHint: string;
     // Compact boundary divider
+    // Conversation chapter rail (left-hand tick scale)
+    chapters: {
+      railLabel: string;
+      openList: string;
+      sessionStart: string;
+      jumpTo: string;
+    };
     compactDivider: {
       compacted: string;
       compactedManual: string;
@@ -664,6 +696,12 @@ export interface TranslationDict {
       tooFew: string;
       failed: string;
     };
+    /** Rewind confirmation (edit-resend / regenerate / retry) — shown only
+     * when the redone turn is not the conversation's last, so later turns
+     * would otherwise be silently and permanently discarded. */
+    rewindConfirmTitle: string;
+    /** Body. {count} = number of later turns that will be discarded. */
+    rewindConfirmMessage: string;
   };
 
   // Share (conversation export / import)
@@ -851,6 +889,7 @@ export interface TranslationDict {
     apiKeyPlaceholder: string;
     apiKeyDesc: string;
     apiKeyDecryptFailed: string;
+    apiKeySaveFailed: string;
     clearAllKeys: string;
     clearAllKeysConfirm: string;
     clearAllKeysDone: string;
@@ -904,6 +943,9 @@ export interface TranslationDict {
     imageGenApiKeyPlaceholder: string;
     imageGenBaseUrl: string;
     imageGenBaseUrlPlaceholder: string;
+    /** Inline warning under the baseUrl input when it points at Volcengine's
+     *  chat endpoint (/api/coding/) instead of the image endpoint. {url} */
+    imageGenChatEndpointWarning: string;
     imageGenModel: string;
     imageGenModelPlaceholder: string;
     imageGenBackendName: string;
@@ -987,6 +1029,12 @@ export interface TranslationDict {
     capabilityMyChrome: string;
     capabilityMyChromeDesc: string;
     capabilityMyChromeScope: string;
+    browserSitePermsTitle: string;
+    browserSitePermsDesc: string;
+    browserSitePermsEmpty: string;
+    browserSitePermsAllowed: string;
+    browserSitePermsDenied: string;
+    browserSitePermsRevoke: string;
     capabilityComputerTitle: string;
     capabilityComputerDesc: string;
     capabilityExtensionsTitle: string;
@@ -1021,6 +1069,15 @@ export interface TranslationDict {
     capabilityComputerDisabled: string;
     capabilityComputerPermissionMissing: string;
     capabilityComputerPartial: string;
+    capabilityComputerModel: string;
+    capabilityComputerModelFull: string;
+    capabilityComputerModelStructured: string;
+    capabilityComputerModelUnsupported: string;
+    capabilityComputerModelUnknown: string;
+    capabilityComputerModelFullNote: string;
+    capabilityComputerModelStructuredNote: string;
+    capabilityComputerModelUnsupportedNote: string;
+    capabilityComputerModelUnknownNote: string;
     capabilityBackToOverview: string;
     capabilityDone: string;
     capabilityCheckConnection: string;
@@ -1060,6 +1117,7 @@ export interface TranslationDict {
     capabilityUIControlDesc: string;
     capabilityComputerStepScreen: string;
     capabilityComputerStepControl: string;
+    capabilityComputerStepOnly: string;
     capabilityScreenReadInstruction: string;
     capabilityUIControlInstruction: string;
     capabilityOpenSystemSettings: string;
@@ -1073,12 +1131,21 @@ export interface TranslationDict {
     capabilityPermissionGuideReturnToAbu: string;
     capabilityPermissionGuideDevelopmentIdentity: string;
     capabilityPermissionGuideErrorTitle: string;
+    capabilityPermissionGuideTimeout: string;
+    capabilityPermissionGuideRestart: string;
+    capabilityPermissionGuideRestartTitle: string;
+    capabilityPermissionGuideRestartDesc: string;
     capabilityComputerReadyTitle: string;
     capabilityComputerReadyDesc: string;
     capabilityReturnToTask: string;
     capabilityComputerPlatformHint: string;
     capabilityComputerPrivacy: string;
     closeWindowBehavior: string;
+    composerEnterBehavior: string;
+    composerEnterBehaviorDesc: string;
+    composerEnterSends: string;
+    /** `{modifier}` = ⌘ / Ctrl. */
+    composerEnterNewline: string;
     closeWindowAsk: string;
     closeWindowAskDesc: string;
     closeWindowMinimize: string;
@@ -1228,9 +1295,21 @@ export interface TranslationDict {
     // Model fetch status messages (ProviderCard + AddProviderModal)
     fetchModelsEmpty: string;
     fetchModelsFailed: string;
+    /** 404 — the address genuinely has no model-list endpoint. */
+    fetchModelsUnsupported: string;
+    /** 403 — endpoint exists; this key is not allowed to list models. */
+    fetchModelsForbidden: string;
+    /** 401 — key missing, invalid, or expired. */
+    fetchModelsUnauthorized: string;
     // Scoped search over a large fetched-models checklist (aggregator/gateway convergence)
     filterModelsPlaceholder: string;
     filterModelsNoResults: string;
+    /** Counter above the fetched-model checklist: '{selected}' of '{total}' picked. */
+    modelsSelectedCount: string;
+    /** Shown in the counter's place while nothing is picked yet. */
+    modelsPickHint: string;
+    selectAllModels: string;
+    clearSelectedModels: string;
     // Enterprise tab label in SystemSettingsModal
     enterpriseMode: string;
   };
@@ -1271,6 +1350,8 @@ export interface TranslationDict {
 
   // Diagnostic
   diagnostic: {
+    telemetryOptOut: string;
+    telemetryOptOutDesc: string;
     title: string;
     desc: string;
     // Banner
@@ -1304,6 +1385,7 @@ export interface TranslationDict {
     actionRecheck: string;
     actionCopyError: string;
     actionOpenAIServices: string;
+    actionOpenCapabilities: string;
     actionOpenAbout: string;
     actionOpenToolbox: string;
     copiedError: string;
@@ -1313,11 +1395,37 @@ export interface TranslationDict {
     aiServicesNoKey: string;
     /** Probe passed but a recent real call failed — {detail} = error code. */
     aiRecentFailure: string;
+    aiComputerUseModel: string;
+    aiComputerUseUnsupported: string;
+    aiComputerUseFull: string;
+    aiComputerUseStructured: string;
+    aiComputerUseUnknown: string;
+    aiComputerUseToolsMissing: string;
+    aiComputerUseVisionMissing: string;
+    aiComputerUseUnknownReason: string;
     // Permissions check
     permAppData: string;
+    permSecretStore: string;
+    secretStoreUnavailable: string;
+    secretStoreRoundtripFailed: string;
+    secretStoreFailedKeys: string;
+    secretStoreFailedKeysHint: string;
     permWorkspace: string;
     permWorkspaceAbu: string;
     permWorkspaceNoSelection: string;
+    permComputerHelper: string;
+    permComputerStatus: string;
+    permComputerUiControl: string;
+    permComputerScreenRead: string;
+    computerAvailable: string;
+    computerUnavailable: string;
+    computerGranted: string;
+    computerMissing: string;
+    computerRestricted: string;
+    computerHelperUnavailable: string;
+    computerPermissionUnknown: string;
+    computerUiControlMissing: string;
+    computerScreenReadMissing: string;
     // MCP
     mcpNone: string;
     mcpNoneHint: string;
@@ -1333,8 +1441,10 @@ export interface TranslationDict {
     appVersion: string;
     appLatest: string;
     appUpdateAvailable: string; // {version}
+    appCheckFailed: string;
     // Internal
     checkInternalError: string;
+    checkTimedOut: string;
     // Detail toggle on failed items
     detailShow: string;
     detailHide: string;
@@ -1776,9 +1886,11 @@ export interface TranslationDict {
     categoryBlocksUnblock: string;      // button label
     categoryBlocksUnblockError: string; // toast title on delete failure
     categoryBlocksHint: string;         // subtitle describing what these are
-    // Enterprise-only tabs (shown when enterprise mode is active)
+    // Enterprise capability source (shown inside Skill / MCP when bound)
     enterpriseSkills: string;
     enterpriseMcp: string;
+    personalSource: string;
+    organizationSource: string;
   };
 
   // Permission Dialog
@@ -1878,6 +1990,16 @@ export interface TranslationDict {
     exitFullscreen: string;
     openInApp: string;
     openInAppFailed: string;
+    moreActions: string;
+    copyPath: string;
+    copyPathDone: string;
+    copyPathFailed: string;
+    saveAs: string;
+    saveAsDone: string;
+    saveAsFailed: string;
+    saved: string;
+    saving: string;
+    saveError: string;
     previewMode: string;
     reloadPreview: string;
     selectElement: string;
@@ -1931,6 +2053,9 @@ export interface TranslationDict {
     pdfZoomOut: string;
     pdfPrevPage: string;
     pdfNextPage: string;
+    pdfFitWidth: string;
+    pdfFit: string;
+    pdfRotate: string;
     // Preview: XLSX
     xlsxSheetLabel: string;
     xlsxRowsShowing: string;
@@ -1943,6 +2068,16 @@ export interface TranslationDict {
     openWithPowerPoint: string;
     // Preview: data-URL image (no file path)
     imagePreview: string;
+    imageType: string;
+    imageZoomIn: string;
+    imageZoomOut: string;
+    imageRotateLeft: string;
+    imageRotateRight: string;
+    imageResetView: string;
+    imageDoubleClickReset: string;
+    imageCopy: string;
+    imageCopied: string;
+    imageCopyFailed: string;
     // WorkspaceFileTree (lightweight lazy-loaded project file tree, code-canvas P0)
     fileTree: {
       title: string;
@@ -2098,6 +2233,21 @@ export interface TranslationDict {
     outputChatIdPlaceholder: string;
     outputUserIdPlaceholder: string;
     outputPushFailed: string;
+    /** Field label + hint for the unattended autonomy tier */
+    permissionMode: string;
+    permissionModeHint: string;
+    /** Option label: the task follows the global settings permission mode (the default). */
+    permissionModeFollowSettings: string;
+    /** {origin} — a per-site browser refusal during an unattended run */
+    denialBrowserSite: string;
+    /** {command} */
+    denialCommand: string;
+    /** {path} */
+    denialFile: string;
+    /** {count} — trailer when more denials happened than are listed */
+    denialMore: string;
+    /** {mode} {list} — appended to a failed run's result text */
+    denialSummary: string;
   };
 
   // Triggers
@@ -2446,6 +2596,29 @@ export interface TranslationDict {
     blocked: string;
     userCancelled: string;
     aiDenied: string;
+    browserAction: string;
+    browserReason: string;
+    browserDenied: string;
+    selfExtensionReason: string;
+    selfExtensionDenied: string;
+    browserTitle: string;
+    browserDescription: string;
+    browserSiteDenied: string;
+    browserScriptReason: string;
+    /** Conversation-scoped approval button (30-minute TTL, this conversation
+     *  only) — shown when a persistent site grant is also offered. Named for
+     *  what it actually grants: "this conversation", not "once". */
+    browserAllowOnce: string;
+    /** "Always allow this site" button — fixed text; the origin itself is
+     *  shown in the dialog's command display, keeping the button short no
+     *  matter how long the URL is. */
+    browserAlwaysAllowSite: string;
+    /** "Block this site" button — writes a persistent 'denied' verdict and
+     *  refuses the pending action. Offered whenever the origin is known,
+     *  including for requests that may not be granted permanently. */
+    browserBlockSite: string;
+    selfExtensionTitle: string;
+    selfExtensionDescription: string;
   };
 
   // Tool error messages (used in core/tools/registry.ts)
@@ -2461,6 +2634,10 @@ export interface TranslationDict {
     queuedHint: string;
     /** aria-label / tooltip of the cancel button */
     cancel: string;
+    /** Explains why queued messages did not auto-run after Stop. */
+    paused: string;
+    /** Resumes the paused FIFO queue. */
+    resume: string;
   };
 
   reference: {
@@ -2707,6 +2884,11 @@ export interface TranslationDict {
   // Computer-use runtime status bar + screen-border overlay windows
   computerUse: {
     controlling: string;
+    /** Names the conversation that owns the CU session when it is NOT the
+     *  one on screen. Interpolates {title}. */
+    fromConversation: string;
+    /** Fallback for {title} above when the owner's title can't be resolved. */
+    otherConversation: string;
     /** Interpolates {step}, e.g. "· Step {step}". */
     step: string;
     stop: string;
@@ -2714,6 +2896,15 @@ export interface TranslationDict {
     overlayStep: string;
     /** Overlay stop-button label. */
     stopControl: string;
+    phaseChecking: string;
+    phaseObserving: string;
+    phaseActing: string;
+    phaseVerifying: string;
+    phaseBlocked: string;
+    modeFull: string;
+    modeStructured: string;
+    modeUnsupported: string;
+    modeUnknown: string;
   };
 
   // Tool runtime result strings (execute() returns/success/error messages).
@@ -2768,6 +2959,8 @@ export interface TranslationDict {
       errAppendContentEmpty: string;
       /** Memory saved. {type}, {name}, {filename}, optional {lock} */
       memorySaved: string;
+      /** Security note appended when credential-shaped content was redacted before saving. {labels} */
+      memoryRedactionNote: string;
       // todoWriteTool
       /** Error: no active session. */
       errNoActiveSession: string;
@@ -3167,6 +3360,14 @@ export interface TranslationDict {
       errProcessImage: string;
       /** process_image succeeded. {path} */
       imageProcessed: string;
+      /** Hint appended to HTTP errors when the backend baseUrl is a
+       *  Volcengine chat endpoint (/api/coding/) instead of the image
+       *  endpoint — the exact shape the V41 migration produced from a legacy
+       *  chat-endpoint config, which 404s with an empty body. {url} */
+      hintVolcChatEndpoint: string;
+      /** Generic hint appended to 404/401 errors: check baseUrl, image model
+       *  (doubao-seedream series for Volcengine), and API key. */
+      hintCheckImageBackend: string;
     };
     // create_todo
     todo: {
@@ -3183,6 +3384,50 @@ export interface TranslationDict {
       schemaLabel: string;
       /** Results header and footer. {count}, {results} */
       resultsFound: string;
+    };
+    // capability_snapshot — read-only inventory of currently usable tools
+    capabilitySnapshot: {
+      /** Report header. {mode}, {computerUse}, {activeCount}, {unavailableCount} */
+      header: string;
+      /** Active tools section label. */
+      activeSectionLabel: string;
+      /** Unavailable tools section label. */
+      unavailableSectionLabel: string;
+      /** Shown when there are no unavailable tools. */
+      noneUnavailable: string;
+      /** Active tool line. {name}, {source}, {note} (note may be an empty string) */
+      activeLine: string;
+      /** Unavailable tool line. {name}, {source}, {reasons} */
+      unavailableLine: string;
+      /** Source label: builtin tool. */
+      sourceBuiltin: string;
+      /** Source label: MCP server tool. {server} */
+      sourceMcp: string;
+      /** Reason: Labs experiment gated off. {experimentId} */
+      reasonLabsGated: string;
+      /** Reason: MCP server disabled by the user. {server} */
+      reasonMcpDisabled: string;
+      /** Reason: MCP server not connected. {server}, {status} */
+      reasonMcpNotConnected: string;
+      /** Reason: MCP server connection error. {server}, {error} */
+      reasonMcpError: string;
+      /** Reason: filtered as a duplicate of Abu's built-in browser. {server} */
+      reasonDuplicateBrowser: string;
+      /** Reason: blocked by enterprise policy. {reason} */
+      reasonPolicyDenied: string;
+      /** Note: this active tool still needs enterprise policy confirmation at call time. {reason} */
+      notePolicyConfirm: string;
+      /** Note: concurrency safety depends on the call's input (e.g. run_command). */
+      noteConcurrencyInputDependent: string;
+      /** Note: computer-use tool exists but isn't enabled in Settings yet. */
+      noteComputerUseDisabled: string;
+      /** Permission mode display label. */
+      permissionModeStandard: string;
+      permissionModeSmart: string;
+      permissionModeAutonomous: string;
+      /** Computer use enabled/disabled display label. */
+      computerUseOn: string;
+      computerUseOff: string;
     };
     // ask_user_question — validation errors and result formatting
     askUserQuestion: {
@@ -3418,6 +3663,9 @@ export interface TranslationDict {
       errBackgroundUnavailable: string;
       /** OS permission probe failed. {msg} */
       errPermissionProbeFailed: string;
+      errPermissionRelaunch: string;
+      errModelUnsupported: string;
+      errModelUnknown: string;
       /** Foreground target identity probe failed. {msg} */
       errTargetIdentityFailed: string;
       /** Main-process Computer Use authorization failed. {msg} */
@@ -3426,6 +3674,32 @@ export interface TranslationDict {
       errConsequenceRequired: string;
       /** Consequential operations need a concise user-visible summary. */
       errConsequenceDetailRequired: string;
+      /** Mutating actions require a fresh state_id from get_app_state. */
+      errStateRequired: string;
+      /** state_id is stale, expired, or already consumed. */
+      errStateStale: string;
+      /** The target identity no longer matches the observation. */
+      errStateTargetChanged: string;
+      /** A write action is already running for this Computer Use run. */
+      errActionInFlight: string;
+      /** The host progress/safety controller stopped the run. */
+      errRunStopped: string;
+      /** Consequential actions require a specific, machine-checkable effect. */
+      errWeakConsequenceVerification: string;
+      progressRecover: string;
+      progressStopped: string;
+      ambiguousSideEffectStopped: string;
+      /** Native input returned an ambiguous failure and must not be retried automatically. {msg} */
+      errActionAmbiguous: string;
+      /** Invalid state/effect protocol input. {reason} */
+      errStateProtocol: string;
+      /** Observation state header. {stateId} */
+      stateHeader: string;
+      /** Automatic post-action verification result. {status}, {stateId} */
+      verificationResult: string;
+      verificationChanged: string;
+      verificationNoChange: string;
+      verificationAmbiguous: string;
       /** formatAxElements: no interactive elements found. */
       noInteractiveElements: string;
       /** screenshot: current model has no vision capability (bilingual). zh half. */

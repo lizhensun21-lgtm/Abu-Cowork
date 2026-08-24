@@ -4,7 +4,7 @@ import { skillLoader } from '../../skill/loader';
 import { agentRegistry } from '../../agent/registry';
 import { getCurrentLoopContext, getLoopContext, requestWorkspace } from '../../agent/permissionBridge';
 import { extractParentConversationSummary } from '../../agent/subagentLoop';
-import { runSubagent } from '../../agent/subagentRunner';
+import { getSubagentRunInheritance, runSubagent } from '../../agent/subagentRunner';
 import type { SubagentProgressEvent } from '../../agent/subagentLoop';
 import { createSubagentController } from '../../agent/subagentAbort';
 import { useChatStore } from '../../../stores/chatStore';
@@ -313,6 +313,8 @@ export const delegateToAgentTool: ToolDefinition = {
         commandConfirmCallback: loopCtx?.commandConfirmCallback,
         filePermissionCallback: loopCtx?.filePermissionCallback,
         allowedTools: loopCtx?.allowedTools,
+        blockedTools: loopCtx?.blockedTools,
+        ...getSubagentRunInheritance(loopCtx),
         onProgress,
       });
 
@@ -326,7 +328,17 @@ export const delegateToAgentTool: ToolDefinition = {
       throw err;
     }
   },
-  isConcurrencySafe: false,
+  // true (not the fail-closed default): before toolExecutor.ts's scheduler
+  // consumed isConcurrencySafe, EVERY multi-call batch ran fully in parallel
+  // unconditionally — so a turn that fanned out several delegate_to_agent
+  // calls to independent sub-agents already ran them concurrently. Each call
+  // spawns its OWN subagent run with its own AbortController/conversation
+  // context (createSubagentController above) — concurrent calls don't share
+  // mutable state the way write_file/run_command do, so there's no new
+  // correctness risk. Leaving this at the fail-closed default would silently
+  // serialize multi-agent fan-out, a flagship-path product behavior change
+  // this batch never intended to make.
+  isConcurrencySafe: true,
 };
 
 /**

@@ -36,6 +36,13 @@ function writeFeed(directory, metadataName, version, artifactName) {
   );
 }
 
+function omitBlockMapSize(directory, metadataName) {
+  const metadataPath = path.join(directory, metadataName);
+  const metadata = YAML.parse(fs.readFileSync(metadataPath, 'utf8'));
+  for (const entry of metadata.files) delete entry.blockMapSize;
+  fs.writeFileSync(metadataPath, YAML.stringify(metadata));
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'abu-release-stage-test-'));
   const input = path.join(root, 'input');
@@ -57,8 +64,14 @@ function fixture() {
   }
   const changelogEn = path.join(root, 'CHANGELOG.md');
   const changelogZh = path.join(root, 'CHANGELOG.zh-CN.md');
-  fs.writeFileSync(changelogEn, '# Changelog\n\n## v0.34.0\n\nEnglish notes\n');
-  fs.writeFileSync(changelogZh, '# 更新日志\n\n## v0.34.0\n\n中文说明\n');
+  fs.writeFileSync(
+    changelogEn,
+    '# Changelog\n\n## v0.35.0\n\nNew English notes\n\n## v0.34.0\n\nEnglish notes\n',
+  );
+  fs.writeFileSync(
+    changelogZh,
+    '# 更新日志\n\n## v0.35.0\n\n新版中文说明\n\n## v0.34.0\n\n中文说明\n',
+  );
   return { root, input, changelogEn, changelogZh };
 }
 
@@ -82,6 +95,18 @@ test('stages all three transition platforms and three isolated updater feeds', (
     ]);
     assert.equal(result.latest.notes, 'English notes');
     assert.equal(result.latest.notes_i18n['zh-CN'], '中文说明');
+    assert.equal(result.websiteRelease.version, 'v0.34.0');
+    assert.equal(result.websiteRelease.notes_i18n['en-US'], 'English notes');
+    assert.equal(result.websiteRelease.notes_i18n['zh-CN'], '中文说明');
+    assert.equal(
+      result.websiteRelease.downloads['mac-arm64'].url,
+      'https://example.invalid/releases/v0.34.0/Abu-0.34.0-arm64.dmg',
+    );
+    assert.ok(fs.existsSync(path.join(output, 'website-release.json')));
+    assert.match(
+      fs.readFileSync(path.join(output, 'website-pointer-map.tsv'), 'utf8'),
+      /website-release\.json\telectron\/latest-release\.json/,
+    );
     assert.ok(fs.existsSync(path.join(output, 'feeds', 'mac-arm64', 'latest-mac.yml')));
     assert.ok(fs.existsSync(path.join(output, 'feeds', 'mac-x64', 'latest-mac.yml')));
     assert.ok(fs.existsSync(path.join(output, 'feeds', 'win-x64', 'latest.yml')));
@@ -90,6 +115,68 @@ test('stages all three transition platforms and three isolated updater feeds', (
       /electron\/win-x64\/Abu-0\.34\.0-windows-x64-setup\.exe/
     );
     assert.equal(result.checksums.every((entry) => entry.sha256.length === 64), true);
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('stages existing external blockmaps when feed entries omit blockMapSize', () => {
+  const fx = fixture();
+  const output = path.join(fx.root, 'output');
+  try {
+    omitBlockMapSize(path.join(fx.input, 'mac-arm64'), 'latest-mac.yml');
+    omitBlockMapSize(path.join(fx.input, 'mac-x64'), 'latest-mac.yml');
+    omitBlockMapSize(path.join(fx.input, 'windows-x64'), 'latest.yml');
+
+    stageRelease({
+      input: fx.input,
+      output,
+      version: 'v0.34.0',
+      repo: 'PM-Shawn/Abu-Cowork',
+      releaseBaseUrl: 'https://example.invalid/releases/v0.34.0',
+      changelogEn: fx.changelogEn,
+      changelogZh: fx.changelogZh,
+    });
+
+    for (const relative of [
+      'feeds/mac-arm64/Abu-0.34.0-arm64.zip.blockmap',
+      'feeds/mac-x64/Abu-0.34.0-x64.zip.blockmap',
+      'feeds/win-x64/Abu-0.34.0-windows-x64-setup.exe.blockmap',
+    ]) {
+      assert.equal(fs.existsSync(path.join(output, relative)), true, relative);
+    }
+    const contentMap = fs.readFileSync(path.join(output, 'content-map.tsv'), 'utf8');
+    assert.match(contentMap, /electron\/mac-arm64\/Abu-0\.34\.0-arm64\.zip\.blockmap/);
+    assert.match(contentMap, /electron\/mac-x64\/Abu-0\.34\.0-x64\.zip\.blockmap/);
+    assert.match(
+      contentMap,
+      /electron\/win-x64\/Abu-0\.34\.0-windows-x64-setup\.exe\.blockmap/,
+    );
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a feed whose external blockmap metadata and file are both absent', () => {
+  const fx = fixture();
+  try {
+    const arm = path.join(fx.input, 'mac-arm64');
+    omitBlockMapSize(arm, 'latest-mac.yml');
+    fs.rmSync(path.join(arm, 'Abu-0.34.0-arm64.zip.blockmap'));
+
+    assert.throws(
+      () =>
+        stageRelease({
+          input: fx.input,
+          output: path.join(fx.root, 'output'),
+          version: 'v0.34.0',
+          repo: 'PM-Shawn/Abu-Cowork',
+          releaseBaseUrl: 'https://example.invalid/releases/v0.34.0',
+          changelogEn: fx.changelogEn,
+          changelogZh: fx.changelogZh,
+        }),
+      /missing blockmap for Abu-0\.34\.0-arm64\.zip/,
+    );
   } finally {
     fs.rmSync(fx.root, { recursive: true, force: true });
   }
@@ -161,10 +248,18 @@ test('normal Electron releases advance only Electron feeds and omit the frozen l
       includeLegacyTransition: false,
     });
     assert.equal(result.latest, null);
+    assert.equal(result.websiteRelease.version, 'v0.35.0');
+    assert.equal(result.websiteRelease.notes_i18n['en-US'], 'New English notes');
+    assert.equal(result.websiteRelease.notes_i18n['zh-CN'], '新版中文说明');
     assert.equal(fs.existsSync(path.join(output, 'latest.json')), false);
+    assert.equal(fs.existsSync(path.join(output, 'website-release.json')), true);
     assert.equal(
       result.checksums.some((entry) => entry.remote === 'latest.json'),
       false,
+    );
+    assert.equal(
+      result.checksums.some((entry) => entry.remote === 'electron/latest-release.json'),
+      true,
     );
     assert.ok(fs.existsSync(path.join(output, 'feeds', 'mac-arm64', 'latest-mac.yml')));
     assert.ok(fs.existsSync(path.join(output, 'feeds', 'win-x64', 'latest.yml')));

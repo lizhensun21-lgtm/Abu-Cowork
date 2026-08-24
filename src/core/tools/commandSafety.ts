@@ -21,6 +21,28 @@ export interface ConfirmationInfo {
   command: string;
   level: DangerLevel;
   reason: string;
+  /**
+   * What the user is being asked to approve. The dialog's wording follows this:
+   * a shell command, a browser action, and a new long-lived capability are not
+   * the same decision, and describing all three as "命令" leaves the user
+   * unable to judge what they are agreeing to. Defaults to 'command' so every
+   * existing caller keeps its current wording.
+   */
+  kind?: 'command' | 'browser' | 'self-extension';
+  /**
+   * Browser confirmations only: the exact origin the action targets, when it
+   * could be resolved. Lets the dialog offer "always allow this site".
+   */
+  browserOrigin?: string;
+  /**
+   * Browser confirmations only: whether the dialog may offer a persistent
+   * per-site grant. False for scripting tools (execute_js) and for actions
+   * whose origin could not be resolved — those are approved one use at a
+   * time. The requester decides this, mirroring how competitors dispatch
+   * allowed persistence scopes per request instead of letting the dialog
+   * guess.
+   */
+  allowPersistentGrant?: boolean;
 }
 
 /**

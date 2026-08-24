@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FolderKanban, PanelLeft, PanelRight, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import abuAvatar from '@/assets/abu-avatar.png';
+import { SIDEBAR_WIDTH } from '@/components/panel/panelWidths';
 
 type WindowMenuGroup = 'edit' | 'window' | 'help';
 
@@ -41,14 +42,15 @@ interface WindowTitleBarProps {
 
 const CONTROL_CLASS =
   'btn-ghost p-1 text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-[var(--abu-bg-hover)] rounded-md pointer-events-auto';
+const SIDEBAR_CONTROL_RIGHT_INSET = 10;
 
 /**
  * macOS keeps the controls in the original 44px overlay so the raised content
  * card can retain its compact 8px top gutter. Only the top 8px strip is
  * draggable; every control remains an explicit no-drag target. Electron on
  * Windows keeps native Window Controls Overlay buttons while the renderer owns
- * the title-bar visuals. Both Windows rows expose an explicit empty drag lane;
- * menus and business controls are isolated no-drag targets.
+ * the compact title-bar visuals. Business controls sit inside the workspace
+ * header plane instead of consuming a second full-width toolbar row.
  */
 export default function WindowTitleBar({
   platform,
@@ -272,12 +274,14 @@ export default function WindowTitleBar({
       }).finally(() => setActiveMenu(null));
     };
 
-    return (
-      <>
-        {windowsTitleBarOverlay && (
+    if (windowsTitleBarOverlay) {
+      const workspaceControlTop = 49;
+
+      return (
+        <>
           <div
             data-abu-windows-native-titlebar
-            className="relative h-9 shrink-0 select-none bg-[var(--abu-bg-canvas)]"
+            className="relative h-[30px] shrink-0 select-none bg-[var(--abu-bg-canvas)]"
           >
             <div
               data-abu-windows-titlebar-safe-area
@@ -332,7 +336,91 @@ export default function WindowTitleBar({
               />
             </div>
           </div>
-        )}
+
+          <div
+            data-abu-windows-workspace-controls
+            className="pointer-events-none fixed inset-0 z-40"
+          >
+            <div
+              data-abu-windows-sidebar-control-plane
+              className="pointer-events-none absolute flex box-border items-center"
+              style={sidebarCollapsed
+                ? { top: workspaceControlTop, left: 20 }
+                : {
+                    top: workspaceControlTop,
+                    left: 0,
+                    width: SIDEBAR_WIDTH,
+                    paddingRight: SIDEBAR_CONTROL_RIGHT_INSET,
+                    justifyContent: 'flex-end',
+                  }}
+            >
+              <div
+                data-abu-titlebar-control-group="left"
+                data-electron-no-drag
+                className="pointer-events-auto flex items-center gap-1"
+              >
+                {showSidebarToggle && (
+                  <button
+                    type="button"
+                    data-electron-no-drag
+                    data-window-control="sidebar"
+                    onClick={onToggleSidebar}
+                    className={CONTROL_CLASS}
+                    title={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+                    aria-label={sidebarCollapsed ? labels.showSidebar : labels.hideSidebar}
+                  >
+                    <PanelLeft className="h-3.5 w-[18px]" strokeWidth={1.5} />
+                  </button>
+                )}
+                {showProjectManagementPortal && (
+                  <button
+                    type="button"
+                    data-electron-no-drag
+                    data-window-control="project-management"
+                    onClick={onOpenProjectManagementPortal}
+                    className={CONTROL_CLASS}
+                    title={labels.projectManagement}
+                    aria-label={labels.projectManagement}
+                  >
+                    <FolderKanban className="h-3.5 w-[18px]" strokeWidth={1.5} />
+                  </button>
+                )}
+                {showSearch && (
+                  <button
+                    type="button"
+                    data-electron-no-drag
+                    data-window-control="search"
+                    onClick={onOpenSearch}
+                    className={CONTROL_CLASS}
+                    title={labels.search}
+                    aria-label={labels.search}
+                  >
+                    <Search className="h-3.5 w-[18px]" strokeWidth={1.5} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {showRightPanelToggle && (
+              <button
+                type="button"
+                data-electron-no-drag
+                data-window-control="right-panel"
+                onClick={onToggleRightPanel}
+                className={cn(CONTROL_CLASS, 'absolute right-4 pointer-events-auto')}
+                style={{ top: workspaceControlTop }}
+                title={rightPanelCollapsed ? labels.showPanel : labels.hidePanel}
+                aria-label={rightPanelCollapsed ? labels.showPanel : labels.hidePanel}
+              >
+                <PanelRight className="h-3.5 w-[18px]" strokeWidth={1.5} />
+              </button>
+            )}
+          </div>
+        </>
+      );
+    }
+
+    return (
         <div
           data-abu-windows-toolbar
           className="flex h-9 shrink-0 items-center border-b border-[var(--abu-border)] bg-[var(--abu-bg-canvas)] px-2"
@@ -346,7 +434,6 @@ export default function WindowTitleBar({
           />
           {rightControl}
         </div>
-      </>
     );
   }
 

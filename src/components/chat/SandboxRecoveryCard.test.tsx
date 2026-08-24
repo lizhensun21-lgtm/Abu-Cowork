@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /// <reference types="@testing-library/jest-dom" />
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -100,7 +101,7 @@ describe('SandboxRecoveryCard', () => {
         'conv-1',
         expect.stringMatching(/Computer Use.*Notes/i),
         {
-          blockedTools: ['run_command', 'delegate_to_agent', 'run_agent_batch'],
+          allowedTools: ['computer', 'ask_user_question'],
           requireNewRun: true,
         },
       );

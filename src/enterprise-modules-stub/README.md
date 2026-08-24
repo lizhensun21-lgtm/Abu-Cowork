@@ -2,21 +2,18 @@
 
 OSS-build placeholder for the closed-source `@abu/enterprise-modules`.
 
-The Abu-opensource client supports an "enterprise mode" runtime switch
-(connect to a self-hosted Abu Console). The **protocol** + **container**
-layer is in this repo (public). The **business UI** (KB browser, Skill
-marketplace tab, MCP tab, policy enforcer modal beyond default, etc.)
-ships separately as a closed-source overlay.
+The public client contains only the host contract and this personal-mode no-op
+implementation. Authentication, binding, heartbeat, policy, organization
+state, LiteLLM gateway behavior, enterprise catalogs, and enterprise UI all
+ship from the private sibling repository.
 
-OSS users can still use enterprise mode — they'll see the bind flow,
-brand badge, and basic transparency page (all in this repo), but the
-business UI panels will be empty. To get the full enterprise UI, use the
-official Abu Enterprise build.
+OSS users do not receive enterprise mode. The official Enterprise build swaps
+this stub for the private module at compile time.
 
 ## Build targets
 
-- `npm run electron:dev` — OSS (this stub)
-- `ABU_BUILD_TARGET=enterprise npm run electron:dev` — uses `../Abu-enterprise-modules/src` via Vite alias (private repo required as sibling)
+- `npm run electron:dev` — OSS (this stub; renderer is rebuilt before launch)
+- `npm run electron:dev:enterprise` — uses `../Abu-enterprise-modules/src` via Vite alias (private repo required as sibling)
 
 ## Vite alias
 
@@ -29,12 +26,13 @@ In `vite.config.ts`, the alias `@enterprise-modules` is resolved as:
 
 ## Export contract
 
-Any module under `@enterprise-modules` must export:
+The private module must mirror every export in `index.ts`. The primary lifecycle
+entry point is:
 
 ```ts
 export async function initEnterpriseModules(): Promise<void>
 ```
 
-This is the only surface called from `App.tsx`. The enterprise build
-additionally registers components into the mount registry via side-effect
-imports inside `initEnterpriseModules`.
+Shared host code imports the same contract in both build targets. In an OSS
+build these exports are inert personal-mode defaults; in an Enterprise build
+they resolve to the private implementation.

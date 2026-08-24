@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /// <reference types="@testing-library/jest-dom" />
 /**
  * Tests for the per-project conversation list in the sidebar.
@@ -37,6 +38,7 @@ vi.mock('@/i18n', () => ({
         renameConversation: '重命名',
         exportConversation: '导出',
         deleteConversation: '删除',
+        moreActions: '更多操作',
       },
     },
   }),

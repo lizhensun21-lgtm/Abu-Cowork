@@ -85,7 +85,7 @@ test('electron-builder keeps migration and the official updater disabled unless 
   assert.equal(base.extraMetadata.abuRelease.tauriMigration, false);
   assert.equal(base.extraMetadata.abuRelease.officialBuild, false);
   assert.equal(base.extraMetadata.abuRelease.distribution, 'abu-project-management');
-  assert.equal(base.extraMetadata.abuRelease.upstreamBaseVersion, '0.34.2');
+  assert.equal(base.extraMetadata.abuRelease.upstreamBaseVersion, '0.41.0');
   assert.equal(base.publish, null);
 
   const parser = configureBuildCommand(createYargs());

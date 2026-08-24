@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Local proxies let each test control invoke/listen/resolveResource
@@ -6,10 +7,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const invoke = vi.fn();
 const listen = vi.fn();
 const resolveResource = vi.fn();
+const traceRuntimeEvent = vi.fn();
+const reportError = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: (...a: unknown[]) => listen(...a) }));
 vi.mock('@tauri-apps/api/path', () => ({ resolveResource: (...a: unknown[]) => resolveResource(...a) }));
+vi.mock('@/core/observability/runtimeTrace', () => ({
+  traceRuntimeEvent: (...a: unknown[]) => traceRuntimeEvent(...a),
+}));
+vi.mock('@/utils/consoleError', () => ({ reportError: (...a: unknown[]) => reportError(...a) }));
 
 import {
   startSidecar,
@@ -19,15 +26,25 @@ import {
   notifySidecar,
   onSidecarNotification,
   onSidecarRequest,
+  onSidecarConnectionState,
   SidecarRequestError,
   __resetForTests,
 } from './sidecarManager';
+import { useEnterpriseStore } from '@/stores/enterpriseStore';
+import type { EnterpriseBinding } from '@/core/enterprise/types';
 
 type EventPayload = { payload: string };
 type EventCallback = (event: EventPayload) => void;
 
 /** eventName -> the callback most recently registered via listen(eventName, cb) */
 let listenCallbacks: Map<string, EventCallback>;
+
+const enterpriseBinding: EnterpriseBinding = {
+  serverUrl: 'https://enterprise.example', orgId: 'org-1', orgName: 'Org',
+  userId: 'user-1', userName: 'User', userEmail: 'user@example.com',
+  deptId: null, roleId: null, accessToken: 'token', boundAt: '2026-08-05T00:00:00Z',
+  llmEndpoint: null, llmVirtualKey: null, llmKeyExpiresAt: null,
+};
 
 function emitClose(): void {
   listenCallbacks.get('mcp-close-abu-sidecar')?.({ payload: '' });
@@ -69,8 +86,11 @@ describe('sidecarManager', () => {
     invoke.mockReset();
     listen.mockReset();
     resolveResource.mockReset();
+    traceRuntimeEvent.mockReset();
+    reportError.mockReset();
     listenCallbacks = new Map();
     __resetForTests();
+    useEnterpriseStore.setState({ mode: { kind: 'personal' }, initialized: true });
     // Simulate running inside the Tauri webview (see utils/tauriEnv.ts) —
     // happy-dom has no __TAURI_INTERNALS__ by default, so the gated no-op
     // test below explicitly deletes it instead.
@@ -91,6 +111,47 @@ describe('sidecarManager', () => {
   });
 
   describe('startSidecar', () => {
+    it('seeds and live-pushes the fail-closed enterprise entitlement mirror', async () => {
+      mockHappyPath();
+      await startSidecar();
+
+      const entitlementWrites = () => invoke.mock.calls
+        .filter((call) => call[0] === 'mcp_write')
+        .map((call) => JSON.parse((call as [string, { message: string }])[1].message) as { method?: string; params?: unknown })
+        .filter((message) => message.method === 'state.enterpriseEntitlement');
+
+      expect(entitlementWrites()).toContainEqual(expect.objectContaining({
+        params: { entitlement: { mode: 'personal', licenseStatus: null, licenseExpiresAt: null, modules: [] } },
+      }));
+
+      useEnterpriseStore.setState({
+        mode: {
+          kind: 'enterprise',
+          binding: enterpriseBinding,
+          config: {
+            brand: { name: 'Org', logoUrl: null, primaryColor: null },
+            defaultSoul: null,
+            policyDefaults: {},
+            modules: ['skills'],
+            licenseStatus: 'valid',
+            licenseExpiresAt: '2099-01-01T00:00:00Z',
+            serverTime: '2026-08-05T00:00:00Z',
+            fetchedAt: 1_700_000_000_000, // filler (TESTING.md §3) — not asserted on
+          },
+        },
+      });
+
+      const expectedEntitlement = __ENTERPRISE_BUILD__
+        ? {
+            mode: 'enterprise', licenseStatus: 'valid',
+            licenseExpiresAt: '2099-01-01T00:00:00Z', modules: ['skills'],
+          }
+        : { mode: 'personal', licenseStatus: null, licenseExpiresAt: null, modules: [] };
+      expect(entitlementWrites()).toContainEqual(expect.objectContaining({
+        params: { entitlement: expectedEntitlement },
+      }));
+    });
+
     it('spawns node with the resolved entry path and registers listeners before spawning', async () => {
       const callOrder: string[] = [];
       resolveResource.mockResolvedValue('/resources/sidecar/index.mjs');
@@ -662,6 +723,9 @@ describe('sidecarManager', () => {
       const spawnsBefore = spawnCallCount();
       const killsBefore = killCallCount();
 
+      // vi.useFakeTimers() is active (outer beforeEach) — Date.now() reads the fake,
+      // advancing clock, not real wall-clock time.
+      // eslint-disable-next-line no-restricted-syntax -- fake timers active, see comment above
       const baseNow = Date.now();
       const perfNow = spyOnPerfNowWithOffset();
       let nextIntervalAt = baseNow + HEARTBEAT_INTERVAL;
@@ -669,6 +733,10 @@ describe('sidecarManager', () => {
       try {
         for (let i = 0; i < 3; i++) {
           perfNow.setOffset(0);
+          // Re-read the fake clock's current (advanced) value each iteration —
+          // this drives the next vi.advanceTimersByTimeAsync() delta below, so it
+          // cannot be a fixed constant.
+          // eslint-disable-next-line no-restricted-syntax -- fake timers active, see comment above
           const now = Date.now();
           // Advance exactly to the next heartbeat interval firing — this is
           // where runHeartbeat() captures `start` via performance.now()
@@ -724,6 +792,9 @@ describe('sidecarManager', () => {
       const spawnsBefore = spawnCallCount();
       const killsBefore = killCallCount();
 
+      // vi.useFakeTimers() is active (outer beforeEach) — Date.now() reads the fake,
+      // advancing clock, not real wall-clock time.
+      // eslint-disable-next-line no-restricted-syntax -- fake timers active, see comment above
       const baseNow = Date.now();
       const perfNow = spyOnPerfNowWithOffset();
       let nextIntervalAt = baseNow + HEARTBEAT_INTERVAL;
@@ -742,6 +813,10 @@ describe('sidecarManager', () => {
       try {
         for (const kind of cycles) {
           perfNow.setOffset(0);
+          // Re-read the fake clock's current (advanced) value each iteration —
+          // this drives the next vi.advanceTimersByTimeAsync() delta below, so it
+          // cannot be a fixed constant.
+          // eslint-disable-next-line no-restricted-syntax -- fake timers active, see comment above
           const now = Date.now();
           // Advance exactly to the next heartbeat interval firing — this is
           // where runHeartbeat() captures `start` via performance.now()
@@ -782,6 +857,185 @@ describe('sidecarManager', () => {
   });
 
   describe('host gate (window.__ABU_SHELL__.mainSupervisesSidecar)', () => {
+    it('uses the dedicated Electron sidecar channel instead of Tauri event subscriptions', async () => {
+      let dedicatedHandler: ((event: {
+        type: 'message' | 'error' | 'close' | 'hung';
+        payload: string;
+        sequence: number;
+        generation: number;
+      }) => void) | undefined;
+      const unsubscribe = vi.fn();
+      (window as Window & {
+        __ABU_SHELL__?: {
+          mainSupervisesSidecar: boolean;
+          subscribeSidecarEvents: (handler: (event: {
+            type: 'message' | 'error' | 'close' | 'hung';
+            payload: string;
+            sequence: number;
+            generation: number;
+          }) => void) => () => void;
+        };
+      }).__ABU_SHELL__ = {
+        mainSupervisesSidecar: true,
+        subscribeSidecarEvents: (handler) => {
+          dedicatedHandler = handler;
+          return unsubscribe;
+        },
+      };
+      mockHappyPath();
+
+      await startSidecar();
+      expect(listen).not.toHaveBeenCalled();
+      expect(dedicatedHandler).toBeTypeOf('function');
+
+      const callsBefore = invoke.mock.calls.length;
+      const pending = request('echo', { via: 'dedicated' }, 2_000);
+      const writeCall = invoke.mock.calls.slice(callsBefore).find((call) => call[0] === 'mcp_write');
+      const sent = JSON.parse((writeCall as [string, { message: string }])[1].message) as { id: number };
+      dedicatedHandler?.({
+        type: 'message',
+        payload: JSON.stringify({ jsonrpc: '2.0', id: sent.id, result: { ok: true } }),
+        sequence: 1,
+        generation: 1,
+      });
+      await expect(pending).resolves.toEqual({ ok: true });
+
+      await stopSidecar();
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('detects a dedicated-channel sequence gap and replays the missing response from main', async () => {
+      let dedicatedHandler: ((event: {
+        type: 'message' | 'error' | 'close' | 'hung';
+        payload: string;
+        sequence: number;
+        generation: number;
+      }) => void) | undefined;
+      const getSidecarBridgeSnapshot = vi.fn();
+      (window as Window & {
+        __ABU_SHELL__?: {
+          mainSupervisesSidecar: boolean;
+          subscribeSidecarEvents: (handler: NonNullable<typeof dedicatedHandler>) => () => void;
+          getSidecarBridgeSnapshot: typeof getSidecarBridgeSnapshot;
+        };
+      }).__ABU_SHELL__ = {
+        mainSupervisesSidecar: true,
+        subscribeSidecarEvents: (handler) => {
+          dedicatedHandler = handler;
+          return () => {};
+        },
+        getSidecarBridgeSnapshot,
+      };
+      mockHappyPath();
+      await startSidecar();
+
+      dedicatedHandler?.({
+        type: 'error', payload: '[sidecar:test] [info] baseline', sequence: 1, generation: 1,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const states: string[] = [];
+      onSidecarConnectionState((event) => states.push(event.state));
+      const callsBefore = invoke.mock.calls.length;
+      const pending = request('echo', { via: 'replay' }, 2_000);
+      const writeCall = invoke.mock.calls.slice(callsBefore).find((call) => call[0] === 'mcp_write');
+      const sent = JSON.parse((writeCall as [string, { message: string }])[1].message) as { id: number };
+      getSidecarBridgeSnapshot.mockResolvedValue({
+        version: 1,
+        sidecarId: 'abu-sidecar',
+        generation: 1,
+        bridgeStatus: 'running',
+        firstAvailableSequence: 1,
+        lastSequence: 3,
+        truncated: false,
+        events: [
+          {
+            type: 'message',
+            payload: JSON.stringify({ jsonrpc: '2.0', id: sent.id, result: { recovered: true } }),
+            sequence: 2,
+            generation: 1,
+          },
+          {
+            type: 'error', payload: '[sidecar:test] [info] live', sequence: 3, generation: 1,
+          },
+        ],
+        runs: [],
+      });
+
+      dedicatedHandler?.({
+        type: 'error', payload: '[sidecar:test] [info] live', sequence: 3, generation: 1,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(pending).resolves.toEqual({ recovered: true });
+      expect(getSidecarBridgeSnapshot).toHaveBeenCalledWith(1);
+      expect(states).toContain('recovering');
+      expect(states.at(-1)).toBe('connected');
+    });
+
+    it('does not execute reverse RPC requests from a truncated replay window', async () => {
+      let dedicatedHandler: ((event: {
+        type: 'message' | 'error' | 'close' | 'hung';
+        payload: string;
+        sequence: number;
+        generation: number;
+      }) => void) | undefined;
+      const getSidecarBridgeSnapshot = vi.fn();
+      (window as Window & {
+        __ABU_SHELL__?: {
+          mainSupervisesSidecar: boolean;
+          subscribeSidecarEvents: (handler: NonNullable<typeof dedicatedHandler>) => () => void;
+          getSidecarBridgeSnapshot: typeof getSidecarBridgeSnapshot;
+        };
+      }).__ABU_SHELL__ = {
+        mainSupervisesSidecar: true,
+        subscribeSidecarEvents: (handler) => {
+          dedicatedHandler = handler;
+          return () => {};
+        },
+        getSidecarBridgeSnapshot,
+      };
+      mockHappyPath();
+      await startSidecar();
+
+      dedicatedHandler?.({
+        type: 'error', payload: '[sidecar:test] [info] baseline', sequence: 1, generation: 1,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const toolHandler = vi.fn().mockResolvedValue({ ok: true });
+      onSidecarRequest('tool.invoke', toolHandler);
+      const states: string[] = [];
+      onSidecarConnectionState((connection) => states.push(connection.state));
+      const reverseRequest = JSON.stringify({
+        jsonrpc: '2.0', id: 'sidecar-tool-1', method: 'tool.invoke',
+        params: { toolName: 'write_file', input: { path: '/tmp/should-not-run' } },
+      });
+      getSidecarBridgeSnapshot.mockResolvedValue({
+        version: 1,
+        sidecarId: 'abu-sidecar',
+        generation: 1,
+        bridgeStatus: 'running',
+        firstAvailableSequence: 2,
+        lastSequence: 3,
+        truncated: true,
+        events: [
+          { type: 'message', payload: reverseRequest, sequence: 2, generation: 1 },
+          { type: 'error', payload: '[sidecar:test] [info] live', sequence: 3, generation: 1 },
+        ],
+        runs: [],
+      });
+
+      dedicatedHandler?.({
+        type: 'error', payload: '[sidecar:test] [info] live', sequence: 3, generation: 1,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(toolHandler).not.toHaveBeenCalled();
+      expect(states).toContain('recovering');
+      expect(states.at(-1)).toBe('failed');
+    });
+
     it('when mainSupervisesSidecar is true, startSidecar() does NOT start a renderer heartbeat, but the mcp-hung listener still forces a restart', async () => {
       (window as Window & { __ABU_SHELL__?: { mainSupervisesSidecar: boolean } }).__ABU_SHELL__ = {
         mainSupervisesSidecar: true,
@@ -875,6 +1129,61 @@ describe('sidecarManager', () => {
 
       expect(getSidecarStatus()).toBe('failed');
       expect(spawnCallCount()).toBe(spawnsBeforeFourth); // no further spawn calls
+    });
+
+    it('records every restart locally but only reports the breaker remotely', async () => {
+      mockHappyPath();
+      await startSidecar();
+
+      emitClose();
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(traceRuntimeEvent).toHaveBeenCalledWith('renderer.sidecar_restart_scheduled', {
+        sidecarId: 'abu-sidecar',
+        reason: 'close',
+        attemptCount: 1,
+        stage: 'restarting',
+        outcome: 'error',
+      });
+      // A single recovered restart is routine — nothing leaves the machine.
+      expect(reportError).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 3; i++) {
+        emitClose();
+        await vi.advanceTimersByTimeAsync(600);
+      }
+
+      expect(traceRuntimeEvent).toHaveBeenCalledWith('renderer.sidecar_crash_loop', {
+        sidecarId: 'abu-sidecar',
+        reason: 'close',
+        attemptCount: 4,
+        outcome: 'error',
+        errorType: 'sidecar_crash_loop',
+      });
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(reportError).toHaveBeenCalledWith(
+        'sidecar_crash',
+        'close',
+        undefined,
+        undefined,
+        'Sidecar crash-looped: 4 restarts within 60000ms',
+      );
+    });
+
+    it('reports the crash-loop only once even if failures keep arriving', async () => {
+      mockHappyPath();
+      await startSidecar();
+
+      for (let i = 0; i < 6; i++) {
+        emitClose();
+        await vi.advanceTimersByTimeAsync(600);
+      }
+
+      expect(getSidecarStatus()).toBe('failed');
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(
+        traceRuntimeEvent.mock.calls.filter((call) => call[0] === 'renderer.sidecar_crash_loop'),
+      ).toHaveLength(1);
     });
   });
 });

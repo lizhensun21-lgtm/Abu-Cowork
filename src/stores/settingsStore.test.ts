@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { reconcileActiveProvider, useSettingsStore, getDefaultImageBackend, getUsableImageBackend, bootstrapSecrets } from './settingsStore';
@@ -986,6 +987,92 @@ describe('bootstrapSecrets — pendingImageGenSecretBridge marker (F2 regression
   });
 });
 
+describe('bootstrapSecrets — orphaned imagegen:<id> secret sweep', () => {
+  const invokeMock = vi.mocked(invoke);
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useSettingsStore.setState({
+      providers: [],
+      auxiliaryServices: {},
+      imageGeneration: {
+        backends: [{ id: 'bk1', name: 'Live', vendor: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiKey: '', model: 'doubao-seedream-4-5' }],
+        defaultId: 'bk1',
+      },
+      pendingImageGenSecretBridge: undefined,
+    });
+  });
+
+  function mockSecretHost(listResult: string[] | null | (() => never), deleted: string[]) {
+    invokeMock.mockImplementation(async (cmd: unknown, args?: unknown) => {
+      if (cmd === 'secret_get') return null;
+      if (cmd === 'secret_set') return undefined;
+      if (cmd === 'secret_failed_keys') return [];
+      if (cmd === 'secret_list') {
+        if (typeof listResult === 'function') return listResult();
+        return listResult;
+      }
+      if (cmd === 'secret_delete') {
+        deleted.push((args as { key: string }).key);
+        return undefined;
+      }
+      return undefined;
+    });
+  }
+
+  it('deletes imagegen:<id> keys with no matching backend, keeping live backends, provider keys, and aux:imageGen', async () => {
+    // The 7-orphan scenario: historical V41 re-runs each minted a fresh
+    // random backend id and bridged the legacy secret onto it, leaving the
+    // previous ids' secrets behind with nothing referencing them.
+    const deleted: string[] = [];
+    mockSecretHost(
+      ['imagegen:bk1', 'imagegen:dead1', 'imagegen:dead2', 'provider:p1', 'aux:imageGen', 'aux:webSearch'],
+      deleted,
+    );
+
+    await bootstrapSecrets();
+
+    expect(deleted.sort()).toEqual(['imagegen:dead1', 'imagegen:dead2']);
+  });
+
+  it('does nothing when secret_list returns null (Windows/Linux keyring has no enumeration API)', async () => {
+    const deleted: string[] = [];
+    mockSecretHost(null, deleted);
+
+    await bootstrapSecrets();
+
+    expect(deleted).toEqual([]);
+  });
+
+  it('still deletes the remaining orphans when one delete rejects (allSettled, not all)', async () => {
+    const deleted: string[] = [];
+    invokeMock.mockImplementation(async (cmd: unknown, args?: unknown) => {
+      if (cmd === 'secret_get') return null;
+      if (cmd === 'secret_set') return undefined;
+      if (cmd === 'secret_failed_keys') return [];
+      if (cmd === 'secret_list') return ['imagegen:dead1', 'imagegen:dead2'];
+      if (cmd === 'secret_delete') {
+        const key = (args as { key: string }).key;
+        if (key === 'imagegen:dead1') throw new Error('keyring busy');
+        deleted.push(key);
+        return undefined;
+      }
+      return undefined;
+    });
+
+    await expect(bootstrapSecrets()).resolves.toBeUndefined();
+    expect(deleted).toEqual(['imagegen:dead2']);
+  });
+
+  it('is non-fatal when the sweep itself throws', async () => {
+    const deleted: string[] = [];
+    mockSecretHost(() => { throw new Error('secret backend unavailable'); }, deleted);
+
+    await expect(bootstrapSecrets()).resolves.toBeUndefined();
+    expect(deleted).toEqual([]);
+  });
+});
+
 describe('secret write-through failure fallback', () => {
   const invokeMock = vi.mocked(invoke);
 
@@ -1014,5 +1101,145 @@ describe('secret write-through failure fallback', () => {
     await vi.waitFor(() => {
       expect((partialize(useSettingsStore.getState()).providers as ProviderInstance[])[0].apiKey).toBe('sk-new');
     });
+  });
+});
+
+describe('failedSecretKeys clearing (decrypt-failed banner)', () => {
+  const invokeMock = vi.mocked(invoke);
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useSettingsStore.setState({
+      providers: [makeProvider({ id: 'p1' })],
+      activeModel: { providerId: 'p1', modelId: 'm1' },
+      failedSecretKeys: ['provider:p1'],
+    });
+  });
+
+  it('clears the marker once updateProvider successfully re-writes the key', async () => {
+    invokeMock.mockResolvedValue(null);
+
+    useSettingsStore.getState().updateProvider('p1', { apiKey: 'sk-new' });
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().failedSecretKeys).not.toContain('provider:p1');
+    });
+  });
+
+  it('keeps the marker when the secret write fails', async () => {
+    invokeMock.mockRejectedValue(new Error('encrypted store unavailable'));
+
+    useSettingsStore.getState().updateProvider('p1', { apiKey: 'sk-new' });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useSettingsStore.getState().failedSecretKeys).toContain('provider:p1');
+  });
+
+  it('clears the marker when the provider is removed', async () => {
+    invokeMock.mockResolvedValue(null);
+
+    useSettingsStore.getState().removeProvider('p1');
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().failedSecretKeys).not.toContain('provider:p1');
+    });
+  });
+});
+
+describe('secretWriteFailedKeys (save-failure feedback)', () => {
+  const invokeMock = vi.mocked(invoke);
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useSettingsStore.setState({
+      providers: [makeProvider({ id: 'p1' })],
+      activeModel: { providerId: 'p1', modelId: 'm1' },
+      failedSecretKeys: [],
+      secretWriteFailedKeys: [],
+    });
+  });
+
+  it('marks the key when the secret write fails', async () => {
+    invokeMock.mockRejectedValue(new Error('encrypted store unavailable'));
+
+    useSettingsStore.getState().updateProvider('p1', { apiKey: 'sk-new' });
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().secretWriteFailedKeys).toContain('provider:p1');
+    });
+  });
+
+  it('clears the marker once a later write succeeds', async () => {
+    useSettingsStore.setState({ secretWriteFailedKeys: ['provider:p1'] });
+    invokeMock.mockResolvedValue(null);
+
+    useSettingsStore.getState().updateProvider('p1', { apiKey: 'sk-new' });
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().secretWriteFailedKeys).not.toContain('provider:p1');
+    });
+  });
+
+  it('still flips the plaintext fallback on failure (fafSecret behavior preserved)', async () => {
+    invokeMock.mockRejectedValue(new Error('encrypted store unavailable'));
+
+    useSettingsStore.getState().updateProvider('p1', { apiKey: 'sk-new' });
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().secretWriteFailedKeys).toContain('provider:p1');
+    });
+    const persistApi = (useSettingsStore as unknown as {
+      persist: { getOptions: () => { partialize: (state: unknown) => Record<string, unknown> } };
+    }).persist;
+    const partialize = persistApi.getOptions().partialize;
+    const persisted = partialize(useSettingsStore.getState()).providers as ProviderInstance[];
+    expect(persisted[0].apiKey).toBe('sk-new');
+  });
+});
+
+// ── Browser site permissions: grant/revoke must reach the persisted payload ──
+// Pins that a revoke is not an in-memory-only change: the persist partialize
+// must reflect both the grant and the removal, so a normally-quit app comes
+// back with exactly what the user last saw in Settings.
+describe('browserSitePermissions persistence', () => {
+  beforeEach(() => {
+    useSettingsStore.setState({ browserSitePermissions: {} });
+  });
+
+  function persistedSitePermissions(): Record<string, string> {
+    const persistApi = (useSettingsStore as unknown as {
+      persist: { getOptions: () => { partialize: (state: unknown) => Record<string, unknown> } };
+    }).persist;
+    const partialize = persistApi.getOptions().partialize;
+    return partialize(useSettingsStore.getState()).browserSitePermissions as Record<string, string>;
+  }
+
+  it('a granted site appears in the persisted payload', () => {
+    useSettingsStore.getState().setBrowserSitePermission('https://example.com', 'allowed');
+    expect(persistedSitePermissions()).toEqual({ 'https://example.com': 'allowed' });
+  });
+
+  it('a revoked site disappears from the persisted payload', () => {
+    useSettingsStore.getState().setBrowserSitePermission('https://example.com', 'allowed');
+    useSettingsStore.getState().removeBrowserSitePermission('https://example.com');
+    expect(persistedSitePermissions()).toEqual({});
+  });
+});
+
+describe('default activeModel stays in the curated list', () => {
+  // The curated-list refresh for v0.41.0 retired claude-sonnet-4-6 while the
+  // store's fresh-install default still named it. Nothing validates membership
+  // at runtime (reconcileActiveProvider only checks the provider), and the
+  // AddProviderModal self-heal is skipped when another provider was enabled
+  // first — so a stale default rides a fresh install's first request. This
+  // pins default ∈ curated list so the next refresh cannot recreate the gap.
+  it('names a model that exists in the default provider config', async () => {
+    const { PROVIDER_CONFIGS } = await import('@/utils/providerConfigs');
+    // getInitialState: earlier tests in this file legitimately mutate the
+    // live store; the fresh-install default is what this contract is about.
+    const { activeModel } = useSettingsStore.getInitialState();
+    const provider = PROVIDER_CONFIGS[activeModel.providerId as keyof typeof PROVIDER_CONFIGS];
+    expect(provider).toBeDefined();
+    expect(provider.models.map((m) => m.id)).toContain(activeModel.modelId);
   });
 });

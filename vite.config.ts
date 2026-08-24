@@ -19,7 +19,7 @@ const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-manage
 if (!DISTRIBUTIONS.includes(distribution as (typeof DISTRIBUTIONS)[number])) {
   throw new Error(`Invalid ABU_DISTRIBUTION: ${distribution}`)
 }
-const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.34.2'
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.41.0'
 if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
   throw new Error(`Invalid ABU_UPSTREAM_BASE_VERSION: ${upstreamBaseVersion}`)
 }
@@ -30,6 +30,28 @@ const BUILD_TARGET = process.env.ABU_BUILD_TARGET ?? 'oss'
 const enterpriseModulesPath = BUILD_TARGET === 'enterprise'
   ? path.resolve(__dirname, '../Abu-enterprise-modules/src')
   : path.resolve(__dirname, 'src/enterprise-modules-stub')
+const srcPath = path.resolve(__dirname, './src')
+const enterprisePeerPackages = [
+  'react',
+  'react-dom',
+  'zustand',
+  '@noble/curves',
+  '@noble/hashes',
+  '@tauri-apps/api',
+  '@tauri-apps/plugin-deep-link',
+  '@tauri-apps/plugin-fs',
+  '@tauri-apps/plugin-http',
+  '@tauri-apps/plugin-opener',
+  'fflate',
+  'lucide-react',
+]
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const enterprisePeerAliases = BUILD_TARGET === 'enterprise'
+  ? enterprisePeerPackages.map((pkg) => ({
+      find: new RegExp(`^${escapeRegExp(pkg)}(?=$|/)`),
+      replacement: path.resolve(__dirname, 'node_modules', pkg),
+    }))
+  : []
 
 console.log(`[vite] ABU_BUILD_TARGET=${BUILD_TARGET} → @enterprise-modules → ${enterpriseModulesPath}`)
 
@@ -46,10 +68,16 @@ export default defineConfig({
   },
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@enterprise-modules': enterpriseModulesPath,
-    },
+    alias: [
+      { find: /^@enterprise-modules(?=$|\/)/, replacement: enterpriseModulesPath },
+      { find: /^@\//, replacement: `${srcPath}/` },
+      ...enterprisePeerAliases,
+    ],
+    // Enterprise modules are a sibling peer-dependency package. Vite 8's
+    // Rolldown resolver otherwise starts from the external importer's path and
+    // cannot see the host node_modules directory. Resolve every shared runtime
+    // from this application root so OSS and Enterprise builds use one copy.
+    dedupe: enterprisePeerPackages,
   },
   clearScreen: false,
   server: {

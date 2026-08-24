@@ -5,12 +5,16 @@ import type { Message, ImageAttachment } from '@/types';
 import { runAgentLoopDispatched } from '@/core/agent/agentLoopRunner';
 import { getPendingCommandConfirmation, resolveCommandConfirmation, subscribeToCommandConfirmation, getPendingFilePermission, resolveFilePermission, subscribeToFilePermission, getPendingWorkspaceRequest, resolveWorkspaceRequest, subscribeToWorkspaceRequest, getPendingUserQuestions, subscribeUserQuestion, findQuestionOwningMessage } from '@/core/agent/permissionBridge';
 import { useSettingsStore, getActiveApiKey, providerRequiresApiKey } from '@/stores/settingsStore';
+import { useEnterpriseStore } from '@/stores/enterpriseStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { PermissionDuration } from '@/stores/permissionStore';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useI18n } from '@/i18n';
 import MessageGroup from './MessageGroup';
 import CompactDivider from './CompactDivider';
+import ChapterRail from './ChapterRail';
+import ChapterMenu from './ChapterMenu';
+import { activeChapterIndex, deriveChapters, topVisibleGroup, type Chapter, type RowPosition } from './chapters';
 import { isCompactBoundary } from '@/core/context/compactBoundary';
 import { getMessageText } from '@/core/context/contextUtils';
 import { compactConversationManually } from '@/core/context/compactionService';
@@ -31,42 +35,16 @@ import ComputerUseStatusBar from './ComputerUseStatusBar';
 import ConvIdBadge from './ConvIdBadge';
 import { cn } from '@/lib/utils';
 import { isMacOS } from '@/utils/platform';
+import { windowDragRowProps } from '@/utils/windowDrag';
 import { Input } from '@/components/ui/input';
 import UsageChip from './UsageChip';
-
-/**
- * Groups messages by loopId for rendering.
- * Messages with the same loopId are grouped together and rendered as one visual block.
- * Messages without loopId (legacy) are each treated as their own group.
- */
-function groupMessagesByLoop(messages: Message[]): Message[][] {
-  const groups: Message[][] = [];
-  let currentGroup: Message[] = [];
-  let currentLoopId: string | undefined | null = null;
-
-  for (const msg of messages) {
-    const msgLoopId = msg.loopId;
-
-    // If loopId changes, or message has no loopId (undefined !== undefined should start new group)
-    if (!msgLoopId || msgLoopId !== currentLoopId) {
-      if (currentGroup.length > 0) {
-        groups.push(currentGroup);
-      }
-      currentGroup = [msg];
-      currentLoopId = msgLoopId;
-    } else {
-      // Same loopId - add to current group
-      currentGroup.push(msg);
-    }
-  }
-
-  // Don't forget the last group
-  if (currentGroup.length > 0) {
-    groups.push(currentGroup);
-  }
-
-  return groups;
-}
+import { shouldShowTypingIndicator } from './typingIndicator';
+import { groupMessagesByLoop } from './messageGrouping';
+import { ThinkingStatusLine, AssistantRowAvatar } from './ThinkingStatusLine';
+import {
+  VIRTUOSO_ITEM_TRAILING_PAD,
+  TYPING_FOOTER_GAP_COMPENSATION,
+} from './chatSpacing';
 
 /**
  * Context passed to the Virtuoso `Footer` component (the streaming typing
@@ -86,7 +64,8 @@ interface MessageListContext {
 // Row wrapper for each virtualized message group. Spacing between groups
 // MUST be padding, not margin (react-virtuoso guidance: margins on measured
 // rows break height measurement/collapse behavior), so this replaces the
-// previous `space-y-5` (margin) gap with a `pb-5` (padding-bottom) applied
+// previous `space-y-5` (margin) gap with a padding-bottom
+// (VIRTUOSO_ITEM_TRAILING_PAD in chatSpacing.ts) applied
 // to every row uniformly. This is deliberately unconditional (no "skip on
 // last item" special-casing): virtualized rows are NOT reliably
 // `:first-child`/`:last-child` in the DOM (whichever row is topmost/
@@ -102,7 +81,7 @@ const VirtuosoMessageItem: NonNullable<Components<Message[], MessageListContext>
   context: _context,
   ...props
 }) => (
-  <div {...props} className="pb-5">
+  <div {...props} className={VIRTUOSO_ITEM_TRAILING_PAD}>
     {children}
   </div>
 );
@@ -114,16 +93,16 @@ const VirtuosoTypingFooter: NonNullable<Components<Message[], MessageListContext
   context,
 }) => {
   if (!context?.showTypingIndicator) return null;
+  // Layout mirrors a MessageGroup's assistant row (shared AssistantRowAvatar,
+  // gap-3, shared ThinkingStatusLine) so the hand-off from this footer to the
+  // real assistant placeholder — and then to the TaskBlock header / "已处理
+  // Xs" fold header — keeps the label on the same baseline at the same size
+  // instead of hopping between typographies ("错行"). The negative top margin
+  // bridges the item-pad vs in-group-gap difference — see chatSpacing.ts.
   return (
-    <div className="flex items-center gap-3 pl-9 py-1">
-      <div className="flex items-center gap-1">
-        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-      </div>
-      <span className="text-body text-[var(--abu-text-tertiary)]">
-        {context.retryingLabel ?? context.thinkingLabel}
-      </span>
+    <div className={cn(TYPING_FOOTER_GAP_COMPENSATION, 'flex gap-3')}>
+      <AssistantRowAvatar />
+      <ThinkingStatusLine label={context.retryingLabel ?? context.thinkingLabel} />
     </div>
   );
 };
@@ -136,7 +115,15 @@ const virtuosoComponents: Components<Message[], MessageListContext> = {
   Footer: VirtuosoTypingFooter,
 };
 
-export default function ChatView() {
+interface ChatViewProps {
+  windowsWorkspaceHeader?: boolean;
+  rightPanelToggleVisible?: boolean;
+}
+
+export default function ChatView({
+  windowsWorkspaceHeader = false,
+  rightPanelToggleVisible = false,
+}: ChatViewProps) {
   const activeConvId = useChatStore((s) => s.activeConversationId);
   const activeConv = useActiveConversation();
   const pendingSearchJump = useChatStore((s) => s.pendingSearchJump);
@@ -154,6 +141,7 @@ export default function ChatView() {
     setIsRenamingTitle(false);
   }, [activeConvId]);
   const createConversation = useChatStore((s) => s.createConversation);
+  const isEnterprise = useEnterpriseStore((s) => s.mode.kind !== 'personal');
   // Subscribe to messages count so ChatView re-renders when background processes
   // (IM agentLoop) add messages — even if the conversation object reference is stale
   const messageCount = useChatStore((s) => {
@@ -296,6 +284,13 @@ export default function ChatView() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Message id to briefly highlight after a search-hit jump (see effect below).
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  // Index of the message group at the top of the viewport — what the chapter
+  // rail highlights. Measured from the DOM (see the scroll-spy effect below).
+  const [firstVisibleGroup, setFirstVisibleGroup] = useState(0);
+  // Whether the transcript column leaves enough gutter to hold the rail.
+  // Measured, not guessed from the viewport: the sidebar and the preview
+  // panel both collapse this container without the window changing size.
+  const [railFits, setRailFits] = useState(true);
 
   // Imperative stick-to-bottom: raw scrollTop assignment on the scroll parent,
   // deferred one frame. scrollToIndex is NOT reliable here — called during
@@ -331,6 +326,66 @@ export default function ChatView() {
     setIsAtBottom(true);
     if (pinnedRef.current) stickToBottom(scrollParentEl);
   }, [activeConvId, scrollParentEl, stickToBottom, updatePinned]);
+
+  // The rail lives inside the transcript column's own left padding (40px from
+  // `md:px-10`, which any desktop viewport gets), and is 26px wide at its
+  // furthest. So it fits at essentially every pane width — this gate only
+  // catches a pane squeezed so far that the ticks would crowd the text, and
+  // then the header button takes over as the way into the chapter list.
+  //
+  // An earlier 940px gate came from measuring the gutter between the WINDOW and
+  // the column instead; that was the wrong frame of reference and hid the rail
+  // on ordinary layouts.
+  useEffect(() => {
+    if (!scrollParentEl) return;
+    const measure = () => setRailFits(scrollParentEl.clientWidth >= 640);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scrollParentEl);
+    return () => observer.disconnect();
+  }, [scrollParentEl]);
+
+  // Scroll-spy for the chapter rail.
+  //
+  // Virtuoso's `rangeChanged` looks like the signal for this and is not: it is
+  // derived from `listState.items`, the RENDERED range, which includes the
+  // 900px of overscan `increaseViewportBy` adds above the viewport. Any
+  // conversation shorter than viewport + 1800px therefore renders every row at
+  // once and reports startIndex 0 forever — the rail would pin to the first
+  // chapter and never move, whatever the user scrolled.
+  //
+  // Real geometry instead. Virtuoso stamps `data-index` on every rendered row,
+  // and the row occupying the top of the viewport is by definition rendered,
+  // so reading the last row whose top has passed the viewport's is exact at
+  // any scroll speed — which an IntersectionObserver on chapter starts would
+  // not be, since those rows unmount once they are far enough away.
+  useEffect(() => {
+    if (!scrollParentEl) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const viewportTop = scrollParentEl.getBoundingClientRect().top;
+      const rows: RowPosition[] = [];
+      for (const row of scrollParentEl.querySelectorAll<HTMLElement>('[data-index]')) {
+        rows.push({ index: Number(row.dataset.index), top: row.getBoundingClientRect().top - viewportTop });
+      }
+      // Resting at the bottom is its own case — see `topVisibleGroup`. Measured
+      // here rather than read off `isAtBottom`, which is React state one render
+      // behind and would leave the rail a frame stale on every scroll.
+      const distanceToBottom =
+        scrollParentEl.scrollHeight - scrollParentEl.scrollTop - scrollParentEl.clientHeight;
+      setFirstVisibleGroup(topVisibleGroup(rows, { atBottom: distanceToBottom <= 24 }));
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    // Also measure now: mounting lands on the newest message without any
+    // scroll event of its own, and the rail must start on the LAST chapter.
+    frame = requestAnimationFrame(measure);
+    scrollParentEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      scrollParentEl.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, [scrollParentEl, activeConvId, messageCount]);
 
   // Unpin on explicit upward user intent. Content growing under the viewport
   // must NOT unpin (that's the whole point of the lock), so we listen for user
@@ -383,11 +438,13 @@ export default function ChatView() {
   }, [pendingSearchJump, activeConvId, messageCount, updatePinned]);
 
   const handleSend = async (text: string, images?: ImageAttachment[], workspacePath?: string | null) => {
-    // Block sending if API key is not configured (Ollama doesn't need one)
+    // Block sending if API key is not configured (Ollama doesn't need one).
+    // Returning false hands the text back to the composer — opening settings
+    // used to swallow whatever the user had typed.
     const currentState = useSettingsStore.getState();
-    if (providerRequiresApiKey(currentState) && !getActiveApiKey(currentState)?.trim()) {
+    if (!isEnterprise && providerRequiresApiKey(currentState) && !getActiveApiKey(currentState)?.trim()) {
       currentState.openSystemSettings('ai-services');
-      return;
+      return false;
     }
 
     let convId = activeConv?.id;
@@ -416,17 +473,29 @@ export default function ChatView() {
     // freshly-appended item on its own next render, so this doesn't need to
     // wait for a DOM mutation callback the way the old MutationObserver did.
     scrollToLatest('auto');
-    await runAgentLoopDispatched(convId, text, { images });
+    const dispatch = await runAgentLoopDispatched(convId, text, { images });
+    // A rejected dispatch (conversation busy, attachment mid-run) used to be
+    // discarded here: the composer had already cleared, so the text and any
+    // images simply vanished with no feedback. Surface it and hand the draft
+    // back instead.
+    if (dispatch?.reason === 'error') {
+      useToastStore.getState().addToast({
+        type: 'error',
+        title: dispatch.error || t.chat.conversationBusy,
+      });
+      return false;
+    }
   };
 
 
   // First-run banner: show when no provider has been configured yet.
   // "Configured" = has an API key OR is a keyless provider (ollama/lmstudio).
-  const needsSetup = useSettingsStore((s) => {
+  const needsPersonalModelSetup = useSettingsStore((s) => {
     return !s.providers.some(
       p => p.apiKey.trim().length > 0 || p.id === 'ollama' || p.id === 'lmstudio'
     );
   });
+  const needsSetup = !isEnterprise && needsPersonalModelSetup;
 
   // Scenario guide state — lifted here so ChatInput can receive the custom placeholder
   const [scenarioPlaceholder, setScenarioPlaceholder] = useState<string | null>(null);
@@ -450,6 +519,37 @@ export default function ChatView() {
   const handleWelcomeInputChange = useCallback((hasText: boolean) => {
     setGuideVisible(!hasText);
   }, []);
+
+  // Message projection for the list. Computed above the early returns below
+  // so the hooks that depend on it stay unconditional (rules-of-hooks).
+  // Filter out internal system prompts while retaining explicit crash
+  // recovery notices that explain an interrupted task to the user.
+  const visibleMessages = messages.filter(m => !m.isSystem || m.isRecoveryNotice);
+  const messageGroups = groupMessagesByLoop(visibleMessages);
+  // Derived from the very array Virtuoso renders, so a chapter's groupIndex is
+  // always a valid scroll target — deriving from `messages` instead would let
+  // the two drift the next time grouping rules change.
+  //
+  // Deliberately not memoized: `messageGroups` is a fresh array on every render
+  // (the filter above already is), so a useMemo keyed on it would recompute
+  // every time anyway while costing an extra dependency array to keep honest.
+  // The walk is O(groups) and sits next to `groupMessagesByLoop`, which is
+  // unmemoized for the same reason.
+  const chapters = deriveChapters(messageGroups, t.chat.chapters.sessionStart);
+  const currentChapter = activeChapterIndex(chapters, firstVisibleGroup);
+
+  // Same landing behaviour as a search hit: release the bottom lock (so a late
+  // height measurement cannot yank the view back down) and flash the target so
+  // the eye finds where it arrived. Unlike a search hit the chapter is aligned
+  // to the top, not centred — a chapter is read forwards from its first
+  // message, and centring would hide the turn that opens it above the fold.
+  const jumpToChapter = useCallback((chapter: Chapter) => {
+    updatePinned(false);
+    setHighlightedMessageId(chapter.messageId);
+    virtuosoRef.current?.scrollToIndex({ index: chapter.groupIndex, align: 'start', behavior: 'auto' });
+    clearTimeout(highlightFadeTimerRef.current);
+    highlightFadeTimerRef.current = setTimeout(() => setHighlightedMessageId(null), 2600);
+  }, [updatePinned]);
 
   // Conversation loading from disk (LRU cache miss) — show skeleton instead of welcome page
   if (activeConvId && !activeConv) {
@@ -487,6 +587,10 @@ export default function ChatView() {
   if (!activeConv || activeConv.messages.length === 0) {
     return (
       <div className="flex flex-col h-full bg-[var(--abu-bg-base)]">
+        {/* The welcome screen has no header row, so it gets the same 44px drag
+            band the conversation view's title row provides. In flow, never
+            overlaying, so it cannot cover the scroller underneath. */}
+        <div {...windowDragRowProps()} className="shrink-0 h-11" />
         <div className="flex-1 flex flex-col items-center justify-start overflow-y-auto px-8 pt-[12vh] pb-12">
           <div className="w-full max-w-2xl">
             {/* Title */}
@@ -571,21 +675,19 @@ export default function ChatView() {
     );
   }
 
-  // Chat view with messages
-  // Filter out internal system prompts while retaining explicit crash
-  // recovery notices that explain an interrupted task to the user.
-  const visibleMessages = messages.filter(m => !m.isSystem || m.isRecoveryNotice);
-  const messageGroups = groupMessagesByLoop(visibleMessages);
-
   return (
     <div className="flex flex-col h-full min-h-0 min-w-0 bg-[var(--abu-bg-base)]">
       {/* Conversation title header — flush at card top (TRAE-style header row).
-          Extra left padding clears the traffic lights when the sidebar is collapsed on macOS. */}
-      <div className={cn(
+          The divider separates navigation context from the conversation body;
+          platform overlays receive only the padding needed by existing controls. */}
+      <div {...windowDragRowProps()} className={cn(
         'shrink-0 flex items-center h-11 px-4',
-        // When the sidebar is collapsed the title-bar toolbar (sidebar toggle + search +
-        // new task) floats over the top-left of this card — indent the title to clear them.
+        windowsWorkspaceHeader && 'border-b border-[var(--abu-border)]',
+        // Collapsed platform controls float over the card's top-left; indent
+        // the title to clear the controls present on that platform.
         sidebarCollapsed && isMacOS() && 'pl-48',
+        sidebarCollapsed && windowsWorkspaceHeader && 'pl-20',
+        rightPanelToggleVisible && windowsWorkspaceHeader && 'pr-12',
       )}>
         {isRenamingTitle ? (
           <Input
@@ -611,6 +713,11 @@ export default function ChatView() {
           >
             {activeConv.title}
           </span>
+        )}
+        {/* Chapter navigation moves into the header exactly when the gutter can
+            no longer hold the rail, so the two never appear at once. */}
+        {!railFits && (
+          <ChapterMenu chapters={chapters} currentIndex={currentChapter} onJump={jumpToChapter} />
         )}
       </div>
 
@@ -657,7 +764,10 @@ export default function ChatView() {
       {!activeConv.imPlatform && <SourceInfoBar conversation={activeConv} />}
 
       {/* Computer Use Status Bar — visible during screen control */}
-      <ComputerUseStatusBar onStop={() => useChatStore.getState().cancelStreaming(activeConv.id)} />
+      {/* The stopped conversation is the one that OWNS the CU session (passed
+          up by the bar), NOT `activeConv.id` — a background conversation can be
+          driving the screen while an unrelated tab is open. See the component. */}
+      <ComputerUseStatusBar onStop={(conversationId) => useChatStore.getState().cancelStreaming(conversationId)} />
 
       {/* Messages Area — overlay-scroll hides the native scrollbar (thumb shows
           only while scrolling, via the global is-scrolling toggle in main.tsx);
@@ -666,6 +776,9 @@ export default function ChatView() {
           shift the content. Both were lost in the Virtuoso-list merge — do not
           drop them again. */}
       <div className="relative flex-1 min-h-0 overflow-y-scroll overlay-scroll" ref={setScrollParentEl}>
+        {railFits && (
+          <ChapterRail chapters={chapters} currentIndex={currentChapter} onJump={jumpToChapter} />
+        )}
         <div className="w-full max-w-4xl mx-auto px-6 md:px-10 pt-5 pb-16 overflow-hidden">
           <Virtuoso
             // Remount per conversation so `initialTopMostItemIndex` re-applies
@@ -696,8 +809,24 @@ export default function ChatView() {
             // images, charts) changes the total list height while the user is
             // pinned, re-stick to the newest message. Event-driven — replaces
             // any "scroll again after N ms" guesswork.
+            //
+            // Gated on an actual gap from the bottom: `followOutput="auto"`
+            // already re-sticks on ordinary content growth (e.g. streamed
+            // thinking/answer tokens, which fire this callback many times a
+            // second), so an unconditional raw `scrollTop = scrollHeight` here
+            // raced it every frame — two independent corrections computed from
+            // slightly different scrollHeight snapshots, which read as the
+            // answer pane jittering up/down while streaming. Only step in when
+            // followOutput hasn't already closed the gap (its actual target
+            // case: content whose size resolves after layout, like images/
+            // iframes finishing their own async measurement).
             totalListHeightChanged={() => {
-              if (pinnedRef.current) stickToBottom(scrollParentEl);
+              if (!pinnedRef.current) return;
+              const el = scrollParentEl;
+              if (!el) return;
+              if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) {
+                stickToBottom(el);
+              }
             }}
             // Keep ~one viewport of rows mounted above/below the visible window.
             // Rows still virtualize (far-off messages stay unmounted), but this
@@ -706,13 +835,19 @@ export default function ChatView() {
             // srcdoc reload + in-widget JS state reset that a bare unmount causes.
             increaseViewportBy={{ top: 900, bottom: 900 }}
             context={{
-              // Typing indicator - brief flash before assistant message is created
-              showTypingIndicator:
-                activeConv?.status === 'running' && messages.every((m) => m.role === 'user'),
+              // Covers the gap before the next assistant placeholder is created.
+              // This occurs both on a normal send and when a staged queue item
+              // is consumed after earlier assistant turns already exist.
+              showTypingIndicator: shouldShowTypingIndicator(activeConv?.status, visibleMessages),
               retryingLabel: retryInfo
                 ? format(t.chat.retrying, { attempt: retryInfo.attempt, max: retryInfo.maxAttempts })
                 : null,
-              thinkingLabel: t.chat.thinking,
+              // status.thinking ("思考中", no trailing ellipsis) — the same
+              // string the in-group placeholder shows and the TaskBlock active
+              // header reduces to (it strips the ellipsis). chat.thinking
+              // ("思考中…") here made the "…" blink out at the footer →
+              // placeholder hand-off, and reads odd before the animated dots.
+              thinkingLabel: t.status.thinking,
             }}
             itemContent={(index, group) =>
               group.length === 1 && isCompactBoundary(group[0]) ? (

@@ -277,6 +277,30 @@ function collectKnownSecretKeys(items) {
   return [...keys];
 }
 
+function hasLegacySourceEvidence(plan, fileMigrationResult) {
+  // Windows Credential Manager outlives AppData. Do not let an unreadable
+  // orphaned credential keep a clean reinstall in the transition retry loop.
+  if (typeof plan?.sourceDatabase === 'string' && plan.sourceDatabase.length > 0) {
+    return true;
+  }
+  // A trusted v2 completion record is upgraded by migrating Notice data only.
+  // That result deliberately carries a partial inventory, so it cannot prove
+  // that the earlier Windows credential migration completed.
+  if (fileMigrationResult?.noticeOnlyUpgrade === true) {
+    return true;
+  }
+  const inventory = fileMigrationResult?.inventory;
+  if (inventory && typeof inventory === 'object' && !Array.isArray(inventory)) {
+    return Object.values(inventory).some(
+      (entry) => entry && typeof entry === 'object' && Number(entry.files || 0) > 0
+    );
+  }
+  // Older completion records may not carry the source inventory. Preserve the
+  // fail-closed retry in that unknown state; current records distinguish an
+  // empty reset from a source that still contains migratable files.
+  return fileMigrationResult?.skipped === 'already-migrated';
+}
+
 function writeSentinel(electronDir, record) {
   fs.mkdirSync(electronDir, { recursive: true });
   const sentinelPath = path.join(electronDir, SENTINEL_FILENAME);
@@ -352,8 +376,23 @@ function prepareTauriLocalStorageMigration(options) {
   const scan = findStorageDatabases(storageRoot, platform);
   if (scan.incomplete) return { status: 'error', reason: 'storage-scan-incomplete' };
   const sourceFingerprint = storageStateFingerprint(scan.paths, platform);
-  if (hasValidSentinel(electronDir, sourceFingerprint)) {
-    return { status: 'skipped', reason: 'already-migrated', sourceFingerprint };
+  // A `complete` sentinel at the current MIGRATION_VERSION permanently ends
+  // the migration — fingerprint drift must NOT re-arm it. The fingerprint
+  // hashes file metadata (size/mtime) of live databases, and merely READING
+  // those databases mutates their sidecar files (SQLite WAL `-shm` on macOS,
+  // LevelDB LOCK/LOG on Windows), so requiring fingerprint equality here made
+  // every completed migration invalid again by the next launch and re-imported
+  // the stale Tauri snapshot with `source-wins` on every boot, wiping current
+  // renderer stores. The fingerprint is still recorded for diagnostics; a
+  // post-completion source change is reported via `sourceChangedSinceMigration`
+  // for the host to log, never silently re-applied.
+  if (hasValidSentinel(electronDir)) {
+    return {
+      status: 'skipped',
+      reason: 'already-migrated',
+      sourceFingerprint,
+      sourceChangedSinceMigration: !hasValidSentinel(electronDir, sourceFingerprint),
+    };
   }
 
   let selected = { items: [], rejectedKeys: [], allowedCount: 0 };
@@ -405,10 +444,21 @@ function migrateWindowsSecrets(plan, options) {
   if (!plan || plan.platform !== 'win32' || !['pending', 'dry-run'].includes(plan.status)) {
     return { migrated: [], overwritten: [], skippedExisting: [], missing: [], failed: [] };
   }
+  if (options.hasLegacySource === false) {
+    return {
+      migrated: [],
+      overwritten: [],
+      skippedExisting: [],
+      missing: [],
+      failed: [],
+      skippedReason: 'no-legacy-source-evidence',
+    };
+  }
   const keys = collectKnownSecretKeys(plan.items);
   let response;
   try {
-    response = runReader(options.readerPath, { operation: 'windowsSecrets', keys });
+    const reader = options.runReader || runReader;
+    response = reader(options.readerPath, { operation: 'windowsSecrets', keys });
   } catch {
     plan.secretMigrationFailed = true;
     return { migrated: [], overwritten: [], skippedExisting: [], missing: [], failed: ['reader'] };
@@ -549,6 +599,7 @@ module.exports = {
   storageStateFingerprint,
   collectValidatedItems,
   collectKnownSecretKeys,
+  hasLegacySourceEvidence,
   hasValidSentinel,
   prepareTauriLocalStorageMigration,
   migrateWindowsSecrets,

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
-import type { Message, MessageContent, ToolCall, ImageAttachment } from '@/types';
+import type { Message, MessageContent, ToolCall } from '@/types';
 import { TOOL_NAMES, isDisplayHiddenStepBackedTool } from '@/core/tools/toolNames';
 import type { ExecutionStep } from '@/types/execution';
 import type { WorkflowStep } from '@/utils/workflowExtractor';
@@ -11,6 +11,7 @@ import UserQuestionCard from './UserQuestionCard';
 import PlanStepsCard from './PlanStepsCard';
 import ShowWidgetCard from './ShowWidgetCard';
 import TaskBlock from './TaskBlock';
+import SmoothHeight from './SmoothHeight';
 import BatchProgress from './BatchProgress';
 import MarkdownRenderer from './MarkdownRenderer';
 import FileAttachment, { ImagePreviewCard, ImageThumbnail, isImageFile } from './FileAttachment';
@@ -19,6 +20,8 @@ import { useChatStore, useActiveConversation } from '@/stores/chatStore';
 import { usePreviewStore } from '@/stores/previewStore';
 import { useI18n, format } from '@/i18n';
 import { MessageErrorBoundary } from '@/components/common/ErrorBoundary';
+import ConfirmDialog from '@/components/common/ConfirmDialog';
+import { computeRewindImpact } from '@/utils/rewindImpact';
 import { useTaskExecutionStore } from '@/stores/taskExecutionStore';
 import { extractWorkflowSteps, extractFileOutputs, extractFilePathsFromText, parsePlanSteps } from '@/utils/workflowExtractor';
 import { parseSearchResults, stripSourcesBlock, parseSourcesFromText } from '@/utils/searchParser';
@@ -26,8 +29,10 @@ import { snapshotToExecutionSteps } from '@/core/agent/executionSnapshot';
 import { runAgentLoopDispatched } from '@/core/agent/agentLoopRunner';
 import { allWorkingDirectories } from '@/core/permissions/workingDirs';
 import { homeDir } from '@tauri-apps/api/path';
-import abuAvatar from '@/assets/abu-avatar.png';
 import { cn } from '@/lib/utils';
+import { ThinkingStatusLine, AssistantRowAvatar } from './ThinkingStatusLine';
+import { GROUP_CONTENT_GAP } from './chatSpacing';
+import { rebuildImageAttachments } from './imageAttachmentRebuild';
 
 interface MessageGroupProps {
   messages: Message[];
@@ -135,6 +140,25 @@ function extractMarkdownImages(text: string): string[] {
 
 function stripMarkdownImages(text: string): string {
   return text.replace(/!\[[^\]]*\]\([^)]+\)\n?/g, '').trim();
+}
+
+const LEGACY_STOP_MARKER = /\s*\*\[已停止\]\*\s*$/;
+
+/** Backward compatibility for transcripts written before runState terminals. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function hasPersistedStopState(messages: Message[]): boolean {
+  return messages.some((message) =>
+    (message.role === 'user' && message.runState === 'interrupted')
+    || (message.role === 'assistant' && message.stopReason === 'user')
+    || (message.role === 'assistant'
+      && typeof message.content === 'string'
+      && LEGACY_STOP_MARKER.test(message.content)),
+  );
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function stripLegacyStopMarker(text: string): string {
+  return text.replace(LEGACY_STOP_MARKER, '').trimEnd();
 }
 
 // --- Render segment types ---
@@ -353,10 +377,11 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
   // Check if THIS execution is active (not global status)
   const isThisExecutionActive = execution?.status === 'running';
 
-  // Execution status is live-only; message.stopReason is persisted so a
-  // stopped tool-only turn keeps the same terminal after app restart.
+  // Reliable-run state on the user message is the canonical persisted
+  // terminal. Assistant stopReason and the old markdown marker remain only as
+  // compatibility fallbacks for transcripts written before that protocol.
   const isStopped = execution?.status === 'cancelled'
-    || assistantMsgs.some((message) => message.stopReason === 'user');
+    || hasPersistedStopState(messages);
 
   // Check if any message is still streaming
   const isStreaming = assistantMsgs.some((m) => m.isStreaming);
@@ -508,30 +533,35 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- isLastGroupProp omitted: adding it would re-trigger preview when a new group demotes this one
   }, [isAgentDone, fileOutputs, openPreview, activeConv?.id]);
 
+  // Rewind confirm state: handleRetry's deleteMessagesFrom truncates from
+  // this loop's first assistant message onward, discarding anything after —
+  // silently, if this isn't the conversation's last loop. See
+  // computeRewindImpact for the "later turns exist" check.
+  const [pendingRewind, setPendingRewind] = useState<{ laterTurnsCount: number; run: () => void } | null>(null);
+
   // Handle retry
   const handleRetry = async () => {
     if (!userMsg || !activeConv?.id) return;
     const convId = activeConv.id;
     const userContent = getTextContent(userMsg.content);
 
-    let retryImages: ImageAttachment[] | undefined;
-    if (Array.isArray(userMsg.content)) {
-      const imgBlocks = userMsg.content.filter((c): c is Extract<MessageContent, { type: 'image' }> => c.type === 'image');
-      if (imgBlocks.length > 0) {
-        retryImages = imgBlocks.map((img, i) => ({
-          id: `retry-${i}`,
-          data: img.source.data,
-          mediaType: img.source.media_type,
-        }));
-      }
-    }
+    const retryImages = rebuildImageAttachments(userMsg.content, 'retry');
 
     const firstAssistantInLoop = assistantMsgs[0];
-    if (firstAssistantInLoop) {
-      useChatStore.getState().deleteMessagesFrom(convId, firstAssistantInLoop.id);
-    }
 
-    await runAgentLoopDispatched(convId, userContent, { images: retryImages });
+    const proceed = async () => {
+      if (firstAssistantInLoop) {
+        useChatStore.getState().deleteMessagesFrom(convId, firstAssistantInLoop.id);
+      }
+      await runAgentLoopDispatched(convId, userContent, { images: retryImages });
+    };
+
+    const impact = computeRewindImpact(activeConv.messages, loopId, userMsg.id);
+    if (impact.hasLaterTurns) {
+      setPendingRewind({ laterTurnsCount: impact.laterTurnsCount, run: proceed });
+      return;
+    }
+    await proceed();
   };
 
   // Tool execution steps for this loop. Thinking is rebuilt per-message inside
@@ -564,7 +594,7 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
   // the execution's start/end timing; fall back to message timestamps when the
   // execution has been evicted (older groups). Aborted = execution cancelled.
   const workStart = execution?.startTime ?? userMsg?.timestamp ?? assistantMsgs[0]?.timestamp;
-  const workEnd = execution?.endTime ?? lastAssistantMsg?.timestamp;
+  const workEnd = execution?.endTime ?? userMsg?.runEndedAt ?? lastAssistantMsg?.timestamp;
   const workSpanMs = workStart != null && workEnd != null ? Math.max(0, workEnd - workStart) : 0;
   // The message-timestamp span under-counts (the last message's own thinking/
   // generation isn't captured — its timestamp is set at creation — and the live
@@ -575,8 +605,11 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
     assistantMsgs.reduce((a, m) => a + (m.thinkingDuration ?? 0), 0) +
     activeExecSteps.filter((s) => s.type !== 'thinking').reduce((a, s) => a + (s.duration ?? 0), 0);
   const workDurationMs = Math.max(workSpanMs, workStepsSec * 1000);
-  const workLabel = execution?.status === 'cancelled'
+  const stoppedLabel = workDurationMs > 0
     ? format(t.chat.stoppedAfter, { duration: formatWorkDuration(workDurationMs) })
+    : t.chat.runInterrupted;
+  const workLabel = isStopped
+    ? stoppedLabel
     : format(t.chat.workedFor, { duration: formatWorkDuration(workDurationMs) });
 
   // Per-segment render callback — extracted from the map so it can be reused
@@ -607,6 +640,9 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
       let cleanedText = allMdImages.length > 0 ? stripMarkdownImages(seg.text) : seg.text;
       if (searchResults.length > 0 && cleanedText) {
         cleanedText = stripSourcesBlock(cleanedText);
+      }
+      if (isStopped) {
+        cleanedText = stripLegacyStopMarker(cleanedText);
       }
       const showCursor = seg.isLastTurn && seg.message.isStreaming && !!cleanedText;
 
@@ -739,38 +775,69 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
         // transition-colors lives on the base class so the highlight fades both
         // in AND out (a conditional transition class vanishes with the bg and
         // makes the removal instant).
-        'message-group space-y-4 w-full rounded-lg transition-colors duration-700',
+        'message-group w-full rounded-lg transition-colors duration-700',
+        GROUP_CONTENT_GAP,
         highlightMessageId != null &&
           messages.some((m) => m.id === highlightMessageId) &&
           'bg-[var(--abu-clay-bg-15)]',
       )}
     >
+      <ConfirmDialog
+        open={!!pendingRewind}
+        title={t.chat.rewindConfirmTitle}
+        message={pendingRewind ? format(t.chat.rewindConfirmMessage, { count: String(pendingRewind.laterTurnsCount) }) : ''}
+        confirmText={t.common.confirm}
+        cancelText={t.common.cancel}
+        onConfirm={() => {
+          const run = pendingRewind?.run;
+          setPendingRewind(null);
+          run?.();
+        }}
+        onCancel={() => setPendingRewind(null)}
+        variant="danger"
+      />
+
       {/* User message renders standalone */}
       {userMsg && <MessageErrorBoundary><MessageBubble message={userMsg} /></MessageErrorBoundary>}
 
       {/* Multiple assistant messages grouped with single avatar */}
-      {assistantMsgs.length > 0 && (
+      {(assistantMsgs.length > 0 || isStopped) && (
         <div className="flex gap-3 w-full overflow-hidden group">
           {/* ABU Avatar - only shown once for the group */}
-          <div className="shrink-0 mt-0.5">
-            <div className="w-7 h-7 rounded-full overflow-hidden">
-              <img src={abuAvatar} alt="Abu" className="w-full h-full object-cover" />
-            </div>
-          </div>
+          <AssistantRowAvatar />
 
           {/* Content area */}
           <div className="flex-1 min-w-0 overflow-hidden">
+            {/* A stopped run is a turn terminal, not assistant-authored text.
+                Render it even when Stop arrived before the first model token
+                and the empty assistant placeholder was durably deleted. */}
+            {isStopped && workFoldEnd == null && (
+              <div className="text-body text-[var(--abu-text-muted)] mb-2">
+                {stoppedLabel}
+              </div>
+            )}
+
+            {/* SmoothHeight bridges the layout SWAPS inside this region — most
+                importantly the completion fold: the expanded thinking/step
+                block unmounts and the one-line "已处理 Xs" header takes its
+                place in the same render, a -100~200px one-frame shrink that
+                (while pinned to the bottom) used to clamp scrollTop and jump
+                the whole view down. Streamed token growth stays instant (it's
+                under the wrapper's threshold); mount-direction growth is
+                handled by .block-expand-enter inside TaskBlock. Enabled only
+                for the last group — that's the only place the completion swap
+                happens; settled history groups keep the wrapper (stable DOM,
+                no child remounts when a new turn arrives) but observe nothing. */}
+            <SmoothHeight enabled={isLastGroupProp}>
             {/* Typing dots — shown while the current turn is streaming but has not
                 yet emitted any renderable content. Tracks the streaming message
                 itself, so a plan card from an earlier turn in the same group does
                 not suppress the dots for the fresh empty turn that follows. */}
             {isStreaming && !streamingHasContent && (
-              <div className="flex items-center gap-1.5 py-2">
-                <span className="text-minor text-[var(--abu-text-muted)]">{t.status.thinking}</span>
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--abu-clay-60)]" />
-              </div>
+              /* mb-2 matches the TaskBlock header / "已处理 Xs" fold header
+                 buttons that replace this row in later states; the label
+                 geometry itself lives in the shared ThinkingStatusLine. */
+              <ThinkingStatusLine label={t.status.thinking} className="mb-2" />
             )}
 
             {/* Render segments: text blocks and merged step groups.
@@ -803,6 +870,7 @@ export default function MessageGroup({ messages, isLastGroup: isLastGroupProp = 
                 {segments.slice(workFoldEnd).map((seg, i) => renderSegment(seg, workFoldEnd + i))}
               </>
             )}
+            </SmoothHeight>
 
             {/* Interactive notice cards (Module I) — skill proposals etc.
                 MessageBubble's tool-call branch doesn't fire for assistant

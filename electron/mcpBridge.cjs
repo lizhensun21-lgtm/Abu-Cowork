@@ -6,9 +6,11 @@
  * stdio servers (src/core/mcp/client.ts) AND the agent sidecar
  * (src/core/sidecar/sidecarManager.ts). The renderer owns the JSON-RPC /
  * supervision on top; main just spawns, pipes stdin, and re-emits stdout/
- * stderr/close as `mcp-msg-{id}` / `mcp-err-{id}` / `mcp-close-{id}` events
- * (delivered via the slice-B event bridge to the frontend's
- * `listen('mcp-msg-{id}', …)`), exactly like the Rust bridge.
+ * stderr/close as `mcp-msg-{id}` / `mcp-err-{id}` / `mcp-close-{id}` events.
+ * Generic MCP servers retain the Tauri-compatible event bridge. The fixed
+ * product sidecar (`abu-sidecar`) uses a dedicated Electron main→preload
+ * channel so unrelated renderer subscription cleanup cannot sever agent
+ * responses; Tauri keeps the original event-listener path.
  *
  * Protocol notes (matching Tauri):
  *  - stdout AND stderr are line-framed (persistent per-stream buffer) — one
@@ -67,6 +69,18 @@ const {
   sandboxLauncherPathFor,
   unixDescendantPids,
 } = require('./commandHost.cjs');
+const {
+  configureRuntimeObservability,
+  runtimeState,
+} = require('./runtimeObservability.cjs');
+const {
+  sendDedicatedSidecarEvent,
+  toDedicatedSidecarEvent,
+} = require('./sidecarEventChannel.cjs');
+const {
+  SIDECAR_ID,
+  sidecarRunRegistry,
+} = require('./sidecarRunRegistry.cjs');
 
 /** id -> ChildProcess */
 const children = new Map();
@@ -191,6 +205,7 @@ function onHeartbeatTimeout(id) {
   state.failures += 1;
   if (state.failures >= HEARTBEAT_FAILURE_THRESHOLD) {
     state.failures = 0;
+    runtimeState.noteHeartbeatHung(id);
     emit(`mcp-hung-${id}`, '');
   }
 }
@@ -232,8 +247,31 @@ function consumeHeartbeatAck(id, line) {
 /** Cache the event-bridge emit after the first require (hot path: one call per stream line). */
 let _emitEvent = null;
 function emit(event, payload) {
-  if (!_emitEvent) _emitEvent = require('./tauriHost.cjs').emitEvent;
-  _emitEvent(event, payload);
+  const tauriHost = require('./tauriHost.cjs');
+  const projectedSidecarEvent = toDedicatedSidecarEvent(event, payload);
+  let sidecarEvent = null;
+  if (projectedSidecarEvent) {
+    if (projectedSidecarEvent.type === 'message') {
+      sidecarRunRegistry.observeInbound(projectedSidecarEvent.payload);
+    } else if (projectedSidecarEvent.type === 'close' || projectedSidecarEvent.type === 'hung') {
+      sidecarRunRegistry.markDisconnected(projectedSidecarEvent.type);
+    }
+    sidecarEvent = sidecarRunRegistry.recordEvent(
+      projectedSidecarEvent.type,
+      projectedSidecarEvent.payload,
+    );
+  }
+  if (
+    sidecarEvent
+    && sendDedicatedSidecarEvent(tauriHost.getMainWindow()?.webContents, sidecarEvent)
+  ) {
+    return;
+  }
+  if (!_emitEvent) _emitEvent = tauriHost.emitEvent;
+  const delivered = _emitEvent(event, payload);
+  if (sidecarEvent && delivered === 0) {
+    runtimeState.noteSidecarBridgeDeliveryMissed(sidecarEvent.type);
+  }
 }
 
 /**
@@ -313,6 +351,7 @@ function mcpDispatch(appOrCmd, cmdOrArgs, maybeArgs) {
   const cmd = typeof appOrCmd === 'string' ? appOrCmd : cmdOrArgs;
   const args = typeof appOrCmd === 'string' ? cmdOrArgs : maybeArgs;
   if (!MCP_CMDS.has(cmd)) return undefined;
+  configureRuntimeObservability(app);
   const a = args || {};
   switch (cmd) {
     case 'mcp_spawn':
@@ -383,6 +422,8 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
     callerEnv.PATH = loginShellPath();
   }
 
+  if (id === SIDECAR_ID) sidecarRunRegistry.beginGeneration();
+  const generation = runtimeState.noteSpawnStarted(id, heartbeat);
   let resolved;
   let spawnEnv;
   try {
@@ -390,6 +431,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
     spawnEnv = withBundledRuntimeEnv(app, callerEnv);
     if (heartbeat) spawnEnv.ABU_ELECTRON_COMMAND_HOST = '1';
   } catch (err) {
+    runtimeState.noteSpawnFailed(id, generation, 'runtime_resolution_failed');
     return Promise.reject(new Error(`mcp_spawn failed for "${command}": ${errMsg(err)}`));
   }
 
@@ -403,6 +445,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
       detached: process.platform !== 'win32',
     });
   } catch (err) {
+    runtimeState.noteSpawnFailed(id, generation, 'launcher_spawn_failed');
     return Promise.reject(new Error(`mcp_spawn failed for "${command}": ${errMsg(err)}`));
   }
   children.set(id, child);
@@ -430,7 +473,10 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
     if (children.get(id) === child) {
       children.delete(id);
       stopHeartbeatMonitor(id);
-      if (targetReady) emit(`mcp-close-${id}`, '');
+      if (targetReady) {
+        runtimeState.noteClosed(id, generation);
+        emit(`mcp-close-${id}`, '');
+      }
     }
   };
 
@@ -455,6 +501,10 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
   let outBuf = '';
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
+    // killChild() removes this exact child before a replacement generation
+    // can register under the same id. Buffered stdout may still arrive after
+    // that kill; never project an obsolete generation into the live channel.
+    if (children.get(id) !== child) return;
     outBuf += chunk;
     let nl;
     while ((nl = outBuf.indexOf('\n')) >= 0) {
@@ -464,6 +514,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
       // Heartbeat ack interception — see consumeHeartbeatAck()'s JSDoc for
       // why this can never swallow a real RPC response.
       if (line.includes('__mcphb-') && consumeHeartbeatAck(id, line)) continue;
+      runtimeState.noteStdoutLine(id, line);
       emit(`mcp-msg-${id}`, line);
     }
   });
@@ -473,6 +524,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
   let errBuf = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => {
+    if (children.get(id) !== child) return;
     errBuf += chunk;
     let nl;
     while ((nl = errBuf.indexOf('\n')) >= 0) {
@@ -487,10 +539,13 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
         targetReady = true;
         child.__abuTargetPid = Number(readyMatch[1]);
         if (heartbeat) startHeartbeatMonitor(id);
+        runtimeState.noteReady(id, generation, child.__abuTargetPid);
+        if (id === SIDECAR_ID) sidecarRunRegistry.markReady();
         settleSpawn(null);
         continue;
       }
       if (line) {
+        runtimeState.noteSidecarTraceLine(id, line);
         launchError = launchError ? `${launchError}\n${line}` : line;
         if (targetReady) emit(`mcp-err-${id}`, line);
       }
@@ -506,6 +561,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
       // Spawn-phase failure — the rejected invoke is the signal; no
       // mcp-err/close events (Rust emits none on spawn failure).
       if (children.get(id) === child) children.delete(id);
+      runtimeState.noteSpawnFailed(id, generation, 'process_spawn_error');
       rejectSpawn(new Error(`mcp_spawn failed for "${command}": ${errMsg(err)}`));
     }
   });
@@ -513,6 +569,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
   child.on('close', (code) => {
     if (!targetReady) {
       if (children.get(id) === child) children.delete(id);
+      runtimeState.noteSpawnFailed(id, generation, 'launcher_exited_before_ready');
       rejectSpawn(new Error(
         `mcp_spawn failed for "${command}": launcher exited with ${String(code)}${launchError ? `: ${launchError}` : ''}`
       ));
@@ -541,6 +598,7 @@ function mcpSpawnPrepared(app, { id, command, args = [], env = {}, heartbeat }) 
 }
 
 function mcpWrite({ id, message }) {
+  const runtimeRpc = runtimeState.noteRpcWriteStarted(id, message);
   const child = children.get(id);
   if (
     !child ||
@@ -549,18 +607,23 @@ function mcpWrite({ id, message }) {
     child.stdin.destroyed ||
     child.stdin.writableEnded
   ) {
+    runtimeState.noteRpcWriteFinished(runtimeRpc, 'no_live_process');
     return Promise.reject(new Error(`mcp_write: no live process for id "${id}"`));
   }
+  if (id === SIDECAR_ID) sidecarRunRegistry.observeOutbound(String(message));
   return new Promise((resolve, reject) => {
     try {
       child.stdin.write(String(message) + '\n', (err) => {
         if (err) {
+          runtimeState.noteRpcWriteFinished(runtimeRpc, 'stdin_write_failed');
           reject(new Error(`mcp_write failed for id "${id}": ${errMsg(err)}`));
         } else {
+          runtimeState.noteRpcWriteFinished(runtimeRpc);
           resolve(null);
         }
       });
     } catch (err) {
+      runtimeState.noteRpcWriteFinished(runtimeRpc, 'stdin_write_threw');
       reject(new Error(`mcp_write failed for id "${id}": ${errMsg(err)}`));
     }
   });
@@ -572,6 +635,7 @@ function mcpKill({ id }) {
     pending.cancelled = true;
     pendingBundledRuntimeSpawns.delete(id);
   }
+  if (children.has(id)) runtimeState.noteKilled(id);
   killChild(id);
   return null;
 }

@@ -7,7 +7,7 @@ import { useInboxStore } from '@/stores/inboxStore';
 import { useI18n } from '@/i18n';
 import { useLabsFlag } from '@/core/labs/resolve';
 import { LABS_TODOS_INBOX } from '@/core/labs/registry';
-import { Plus, Workflow, Wrench, Trash2, Download, Pencil, Undo2, FolderInput, FolderClosed, ChevronRight, Minus, CheckSquare, Inbox, ListTree, ArrowLeft } from 'lucide-react';
+import { Plus, Workflow, Wrench, Trash2, Download, Pencil, Undo2, FolderInput, FolderClosed, ChevronRight, Minus, CheckSquare, Inbox, ListTree, ArrowLeft, MoreHorizontal } from 'lucide-react';
 import GuideModal from '@/components/common/GuideModal';
 import ProfileEditModal from '@/components/common/ProfileEditModal';
 import AccountMenu from '@/components/sidebar/AccountMenu';
@@ -24,9 +24,7 @@ import { readTextFile } from '@tauri-apps/plugin-fs';
 import ShareExportDialog from '@/components/share/ShareExportDialog';
 import ImportedBadge from './ImportedBadge';
 import { isMacOS, isWindows } from '@/utils/platform';
-import EnterpriseStatusBadge from '@/components/enterprise/EnterpriseStatusBadge';
-// Side-effect import: registers BrandSlot in the enterprise mounts registry
-import '@/components/enterprise/BrandSlot';
+import { APP_VERSION } from '@/utils/version';
 
 interface StatusIndicatorProps {
   status: ConversationStatus;
@@ -69,7 +67,11 @@ function IMPlatformDot({ platform }: { platform: string }) {
   );
 }
 
-export default function Sidebar() {
+interface SidebarProps {
+  windowsWorkspaceHeader?: boolean;
+}
+
+export default function Sidebar({ windowsWorkspaceHeader = false }: SidebarProps) {
   const conversationIndex = useChatStore((s) => s.conversationIndex);
   const conversations = useChatStore((s) => s.conversations);
   const activeConversationId = useChatStore((s) => s.activeConversationId);
@@ -245,6 +247,19 @@ export default function Sidebar() {
     setContextMenu({ x: e.clientX, y: e.clientY, convId });
   };
 
+  // Claude-style "⋯" trigger: same menu as right-click, anchored under the button.
+  const handleMenuButton = (e: React.MouseEvent<HTMLButtonElement>, convId: string) => {
+    e.stopPropagation();
+    if (contextMenu?.convId === convId) {
+      setContextMenu(null);
+      setShowMoveSubmenu(false);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setShowMoveSubmenu(false);
+    setContextMenu({ x: rect.left, y: rect.bottom + 4, convId });
+  };
+
   const handleExport = async (convId: string) => {
     // Ensure the conversation is loaded before the dialog reads from it;
     // the dialog itself will call exportConversationForShare which also
@@ -272,21 +287,39 @@ export default function Sidebar() {
 
   return (
     <div className="flex flex-col h-full w-[260px] bg-[var(--abu-bg-canvas)]">
-      {/* macOS controls are an overlay, so the expanded sidebar keeps its
-          original 56px content clearance. Windows reserves toolbar space in
-          App's normal flow; Linux keeps its compact native-titlebar spacer. */}
-      <div
-        className={
-          isMacOS()
-            ? 'h-14 shrink-0'
-            : isWindows()
-              ? 'h-0 shrink-0'
-              : 'h-8 shrink-0'
-        }
-      />
+      {/* Electron Windows aligns this brand row with the raised center/right
+          headers: 8px canvas gutter + 44px header. The canvas background stays
+          unchanged, without a card edge or divider. Other hosts retain their
+          existing platform-specific clearance. */}
+      {windowsWorkspaceHeader ? (
+        <div
+          data-abu-windows-sidebar-header
+          className="flex h-[52px] shrink-0 items-center px-6 pt-2 pr-[76px]"
+        >
+          <div className="flex min-w-0 items-baseline gap-2 whitespace-nowrap">
+            <span className="truncate text-h-xs font-semibold text-[var(--abu-text-primary)]">
+              {t.common.appName}
+            </span>
+            <span className="text-caption text-[var(--abu-text-tertiary)]">
+              v{APP_VERSION}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div
+          className={
+            isMacOS()
+              ? 'h-14 shrink-0'
+              : isWindows()
+                ? 'h-0 shrink-0'
+                : 'h-8 shrink-0'
+          }
+        />
+      )}
       {/* Top Navigation */}
       <nav className="px-4 pb-2 space-y-0.5" aria-label="Main navigation">
         <button
+          data-sidebar-action="new-task"
           onClick={() => { startNewConversation(); setViewMode('chat'); setShowFileTree(false); }}
           className={cn(
             'btn-ghost flex items-center gap-3 w-full px-3 py-2.5 text-body font-medium rounded-lg',
@@ -483,10 +516,17 @@ export default function Sidebar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={(e) => handleDeleteConversation(e, conv.id)}
-                  className="h-5 w-5 opacity-0 group-hover:opacity-100 text-[var(--abu-text-tertiary)] hover:text-[var(--abu-danger)] hover:bg-transparent shrink-0"
+                  onClick={(e) => handleMenuButton(e, conv.id)}
+                  className={cn(
+                    'h-5 w-5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-[var(--abu-text-tertiary)] hover:text-[var(--abu-text-primary)] hover:bg-transparent shrink-0',
+                    contextMenu?.convId === conv.id && 'opacity-100 text-[var(--abu-text-primary)]'
+                  )}
+                  title={t.sidebar.moreActions}
+                  aria-label={t.sidebar.moreActions}
+                  aria-haspopup="menu"
+                  aria-expanded={contextMenu?.convId === conv.id}
                 >
-                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.5} />
                 </Button>
               </div>
               );
@@ -497,9 +537,6 @@ export default function Sidebar() {
         )}
       </ScrollArea>
       )}
-
-      {/* Enterprise status badge — shown above user section when in enterprise mode */}
-      <EnterpriseStatusBadge />
 
       {/* User Section — single avatar trigger opening the account popover */}
       <div className="px-3 py-3 shrink-0">

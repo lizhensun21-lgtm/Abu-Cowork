@@ -89,8 +89,16 @@ function getTextContent(content: string | MessageContent[]): string {
 function generateToolId(index: number, msgIndex: number): string {
   // Anthropic requires ^[a-zA-Z0-9_-]+$, max 64 chars
   // OpenAI typically uses call_xxx format
-  // We use a neutral format; serializers can re-prefix if needed
-  return `toolu_${msgIndex}_${index}_${Date.now().toString(36)}`;
+  // We use a neutral format; serializers can re-prefix if needed.
+  //
+  // DETERMINISTIC on purpose — no timestamp/random suffix. The id only needs
+  // to be unique WITHIN one request (to pair tool_use with tool_result);
+  // message position already guarantees that. A per-request-random suffix
+  // made the same historical tool call serialize differently on every
+  // request, changing prompt bytes mid-history and busting the provider
+  // prompt cache from that point on (verified by byte-diffing captured
+  // request bodies).
+  return `toolu_${msgIndex}_${index}`;
 }
 
 /** Extract images from ToolResultContent[] */
@@ -127,6 +135,19 @@ function convertUserContent(
         imageCount++;
       } else if (c.source.data) {
         blocks.push({ type: 'image', mediaType: c.source.media_type, data: c.source.data });
+        // Composer admission downscaled this image to fit provider dimension
+        // limits. Tell the model, or it reads fine print and reports pixel
+        // coordinates as though it were seeing the original resolution. Produced
+        // here rather than stored as content so it never renders in the user's
+        // own message bubble; the recorded dimensions make it deterministic.
+        // LLM-facing → English, like the other agent-loop prompts.
+        if (c.resized) {
+          const { fromWidth, fromHeight, toWidth, toHeight } = c.resized;
+          blocks.push({
+            type: 'text',
+            text: `<image_resize_notice>The preceding image was resized from ${fromWidth}x${fromHeight} to ${toWidth}x${toHeight} pixels.</image_resize_notice>`,
+          });
+        }
       } else {
         // Vision model, but the base64 was stripped and rehydration couldn't
         // refill it (no filePath to recover from). Never emit an empty
@@ -140,11 +161,12 @@ function convertUserContent(
     }
   }
 
-  // If images were stripped, add a hint
+  // If images were stripped, add a hint. LLM-facing → English (the reply
+  // language is set by the response-language section, not by this string).
   if (imageCount > 0 && !supportsVision) {
     blocks.push({
       type: 'text',
-      text: `[用户上传了${imageCount}张图片，但当前模型不支持图片理解，也无法通过 read_file 等工具间接查看图片。请直接告知用户当前模型不支持图片识别，建议切换到支持视觉的模型。]`,
+      text: `[The user attached ${imageCount} image(s), but the current model does not support image understanding, and the images cannot be viewed indirectly through tools such as read_file. Tell the user directly that the current model does not support image recognition, and suggest switching to a vision-capable model.]`,
     });
   }
 

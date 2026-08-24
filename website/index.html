@@ -35,6 +35,7 @@
                 <a href="#screenshots" class="nav-link">Preview</a>
                 <a href="#use-cases" class="nav-link">Use Cases</a>
                 <a href="#tech" class="nav-link">Architecture</a>
+                <a href="enterprise.html" class="nav-link nav-link-hot" aria-label="Enterprise, hot">Enterprise<span class="nav-hot-flame" aria-hidden="true">🔥</span></a>
                 <a href="docs.html" class="nav-link">Docs</a>
                 <a href="#social" class="nav-link">Community</a>
                 <a href="index.zh-CN.html" class="nav-lang" aria-label="切换到中文" onclick="try{localStorage.setItem('abu-lang','zh')}catch(e){}">
@@ -46,7 +47,7 @@
                     GitHub
                 </a>
             </div>
-            <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
+            <button class="nav-toggle" id="navToggle" aria-label="Open navigation menu" aria-controls="navLinks" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
         </div>
@@ -68,21 +69,21 @@
                         <svg class="dl-chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
                     <div class="dl-menu" id="dlMenu" hidden>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlMacSilicon" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlMacSilicon" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">macOS Apple Silicon</span>
                                 <span class="dl-menu-sub">dmg · Apple M-series</span>
                             </div>
                         </a>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlMacIntel" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlMacIntel" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">macOS Intel</span>
                                 <span class="dl-menu-sub">dmg · x86_64</span>
                             </div>
                         </a>
-                        <a href="https://github.com/PM-Shawn/Abu-Cowork/releases/latest" id="dlWindows" class="dl-menu-item" target="_blank" rel="noopener">
+                        <a href="/" id="dlWindows" class="dl-menu-item" target="_blank" rel="noopener" aria-disabled="true">
                             <svg class="dl-menu-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
                             <div class="dl-menu-info">
                                 <span class="dl-menu-name">Windows</span>
@@ -90,8 +91,7 @@
                             </div>
                         </a>
                         <div class="dl-menu-footer">
-                            <span id="dlVersion"></span>
-                            <a href="https://github.com/PM-Shawn/Abu-Cowork/releases" target="_blank" rel="noopener">All releases</a>
+                            <a href="docs.html#installation">Installation help</a>
                         </div>
                     </div>
                 </div>
@@ -120,7 +120,7 @@
         </div>
     </section>
 
-    <!-- What's new (populated from latest.json; hidden until notes load) -->
+    <!-- What's new (populated from Electron release metadata; hidden until notes load) -->
     <section class="whatsnew" id="whatsnew" hidden>
         <div class="container">
             <details>
@@ -148,7 +148,7 @@
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                     </div>
-                    <h3>Autonomous Agent Execution</h3>
+                    <h3>Autonomous Task Execution</h3>
                     <p>Plans tasks, calls tools, reads and writes files, and runs commands — completing complex workflows on its own.</p>
                 </div>
                 <div class="feature-card">
@@ -156,21 +156,21 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
                     </div>
                     <h3>Skill System</h3>
-                    <p>29 built-in skills spanning Office documents, design, browser automation, and dev assistance — one-click install, fully extensible.</p>
+                    <p>Skills cover Office documents, design, browser automation, and development, with installation, customization, and continuous refinement.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
                     </div>
-                    <h3>MCP Tool Protocol</h3>
-                    <p>Connect databases, search engines, GitHub, and other external services through the Model Context Protocol.</p>
+                    <h3>Connectors</h3>
+                    <p>Connect databases, search engines, GitHub, and other services through MCP, managed together in Toolbox.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                     </div>
-                    <h3>Triggers &amp; On-Call</h3>
-                    <p>Auto-trigger on HTTP requests, file changes, Cron schedules, IM messages, and more — for 24/7 unattended operation.</p>
+                    <h3>Automation</h3>
+                    <p>Scheduled tasks and event listeners respond to HTTP, file changes, time, or IM messages while Abu is running and the computer is awake.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -197,8 +197,8 @@
                     <div class="feature-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     </div>
-                    <h3>Parallel Multi-Agent</h3>
-                    <p>Up to 5 background agents work at once, each running its own task with live progress — complex work advances in parallel.</p>
+                    <h3>Multi-Agent Collaboration</h3>
+                    <p>The main agent can assign bounded subtasks to other agents, then collect their progress and results.</p>
                 </div>
                 <div class="more-caps">
                     <span class="more-caps-label">More Capabilities</span>
@@ -207,7 +207,7 @@
                         <span class="more-cap">Labs · Desktop Pet</span>
                         <span class="more-cap">IM channel integration</span>
                         <span class="more-cap">Multi-model support</span>
-                        <span class="more-cap">Projects management</span>
+                        <span class="more-cap">Project management</span>
                         <span class="more-cap">Conversation sharing</span>
                         <span class="more-cap">Smart notifications</span>
                         <span class="more-cap">Personality (Soul)</span>
@@ -253,7 +253,7 @@
                     <div class="showcase">
                         <div class="showcase-list">
                             <button class="showcase-item active" data-img="assets/screenshot-im-chat.en.png" data-cap="Just @Abu in Feishu or DingTalk to interact">IM Channel Chat</button>
-                            <button class="showcase-item" data-img="assets/screenshot-skills.en.png" data-cap="29 built-in skills, fully extensible">Skills</button>
+                            <button class="showcase-item" data-img="assets/screenshot-skills.en.png" data-cap="Install, customize, and continuously refine skills">Skills</button>
                             <button class="showcase-item" data-img="assets/screenshot-mcp.en.png" data-cap="One-click access to Playwright, GitHub, and other external tools">MCP Connectors</button>
                             <button class="showcase-item" data-img="assets/screenshot-agents.en.png" data-cap="A library of expert agents you can summon by @name">Expert Agents</button>
                         </div>
@@ -266,14 +266,14 @@
                 <div class="screenshot-panel" data-panel="automation">
                     <div class="showcase">
                         <div class="showcase-list">
-                            <button class="showcase-item active" data-img="assets/screenshot-multi-agent.en.png" data-cap="Up to 5 background agents work at once with live progress">Parallel Multi-Agent</button>
+                            <button class="showcase-item active" data-img="assets/screenshot-multi-agent.en.png" data-cap="The main agent delegates subtasks and collects progress and results">Multi-Agent Collaboration</button>
                             <button class="showcase-item" data-img="assets/screenshot-schedule-create.en.png" data-cap="Cron scheduling puts Abu to work automatically every day">Scheduled Tasks</button>
                             <button class="showcase-item" data-img="assets/screenshot-triggers.en.png" data-cap="Auto-trigger on HTTP, file changes, IM messages, and more">Triggers &amp; On-Call</button>
                             <button class="showcase-item" data-img="assets/screenshot-memory.en.png" data-cap="Remembers your preferences and work habits">Personal Memory</button>
                         </div>
                         <div class="showcase-view">
                             <img class="showcase-img" src="assets/screenshot-multi-agent.en.png" alt="Parallel Multi-Agent" loading="lazy">
-                            <p class="showcase-caption">Parallel Multi-Agent · Up to 5 background agents work at once with live progress</p>
+                            <p class="showcase-caption">Multi-Agent Collaboration · The main agent delegates subtasks and collects progress and results</p>
                         </div>
                     </div>
                 </div>
@@ -284,7 +284,7 @@
                             <button class="showcase-item" data-img="assets/screenshot-theme.en.png" data-cap="Light / dark / follow-system, switched in one click">Theme Switching</button>
                             <button class="showcase-item" data-img="assets/screenshot-labs.en.png" data-cap="New features in the works, enable as needed (currently: Desktop Pet)">Labs</button>
                             <button class="showcase-item" data-img="assets/screenshot-soul.en.png" data-cap="Three proactivity presets plus SOUL.md for custom tone and reply style">Personality (Soul)</button>
-                            <button class="showcase-item" data-img="assets/screenshot-diagnostic.en.png" data-cap="One-click self-check of AI service / MCP / skills / network, plus diagnostic bundle export">Diagnostics Panel</button>
+                            <button class="showcase-item" data-img="assets/screenshot-diagnostic.en.png" data-cap="One-click checks for models / connectors / skills / network, plus diagnostic bundle export">Diagnostics Panel</button>
                             <button class="showcase-item" data-img="assets/screenshot-security-scan.en.png" data-cap="120+ risk categories blocked, with three permission modes to fit the context">Content Safety Scan</button>
                         </div>
                         <div class="showcase-view">
@@ -364,7 +364,7 @@
                 <div class="tech-card">
                     <div class="tech-label">Desktop Framework</div>
                     <div class="tech-value">Electron</div>
-                    <div class="tech-detail">Rust backend, native performance, secure sandbox</div>
+                    <div class="tech-detail">Electron main process + native components for desktop integration and security boundaries</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">Frontend</div>
@@ -373,13 +373,13 @@
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">AI Integration</div>
-                    <div class="tech-value">Multi-Model Agent</div>
-                    <div class="tech-detail">Tool Calling + MCP protocol + Skill system</div>
+                    <div class="tech-value">Multi-Model Task Execution</div>
+                    <div class="tech-detail">Tool calling + Skills + Connectors</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">Security</div>
                     <div class="tech-value">Sandbox Isolation</div>
-                    <div class="tech-detail">Seatbelt sandbox + path protection + command checks</div>
+                    <div class="tech-detail">OS sandboxing + path protection + command checks</div>
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">Data</div>
@@ -388,8 +388,8 @@
                 </div>
                 <div class="tech-card">
                     <div class="tech-label">Extensibility</div>
-                    <div class="tech-value">Plugin Architecture</div>
-                    <div class="tech-detail">Skills + Subagents + MCP, extend on demand</div>
+                    <div class="tech-value">Extensible Toolbox</div>
+                    <div class="tech-detail">Skills + Agents + Connectors, extended on demand</div>
                 </div>
             </div>
         </div>
@@ -404,7 +404,7 @@
                 <div class="step">
                     <div class="step-number">1</div>
                     <h3>Download &amp; Install</h3>
-                    <p>Grab the installer for your platform from GitHub Releases</p>
+                    <p>Use the download button at the top of this page and choose your platform</p>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
@@ -413,8 +413,8 @@
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
-                    <h3>Start Chatting</h3>
-                    <p>Head back to the main screen and tell Abu what you need in plain language</p>
+                    <h3>Start a Task</h3>
+                    <p>Choose a workspace and describe the goal, constraints, and deliverable in plain language</p>
                 </div>
             </div>
         </div>
@@ -492,6 +492,7 @@
                 <div class="footer-links">
                     <a href="https://github.com/PM-Shawn/Abu-Cowork" target="_blank" rel="noopener">GitHub</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/releases" target="_blank" rel="noopener">Releases</a>
+                    <a href="enterprise.html">Enterprise</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/issues" target="_blank" rel="noopener">Issues</a>
                     <a href="https://github.com/PM-Shawn/Abu-Cowork/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
                 </div>
@@ -501,12 +502,16 @@
     </footer>
 
     <script>
-        // Dynamic download links from OSS latest.json → GitHub API fallback
+        // Resolve release metadata on the homepage; installer downloads always use the official OSS host.
         (function () {
-            const OSS_LATEST = 'https://abu-agent.oss-cn-beijing.aliyuncs.com/latest.json';
-            const OSS_BASE   = 'https://abu-agent.oss-cn-beijing.aliyuncs.com';
-            const GH_API     = 'https://api.github.com/repos/PM-Shawn/Abu-Cowork/releases/latest';
-            const GH_LATEST  = 'https://github.com/PM-Shawn/Abu-Cowork/releases/latest';
+            const OSS_BASE = 'https://abu-agent.oss-cn-beijing.aliyuncs.com';
+            const RELEASE_METADATA = `${OSS_BASE}/electron/latest-release.json`;
+            const downloadLinks = ['dlMacSilicon', 'dlMacIntel', 'dlWindows']
+                .map(id => document.getElementById(id));
+
+            downloadLinks.forEach(link => link.addEventListener('click', event => {
+                if (link.dataset.ready !== 'true') event.preventDefault();
+            }));
 
             function detectPlatform() {
                 const ua = navigator.userAgent;
@@ -515,10 +520,14 @@
                 return 'other';
             }
 
-            function applyLinks(tag, urls) {
+            function applyLinks(urls) {
                 document.getElementById('dlMacSilicon').href = urls.macSilicon;
                 document.getElementById('dlMacIntel').href   = urls.macIntel;
                 document.getElementById('dlWindows').href    = urls.windows;
+                downloadLinks.forEach(link => {
+                    link.dataset.ready = 'true';
+                    link.removeAttribute('aria-disabled');
+                });
 
                 const platform = detectPlatform();
 
@@ -526,41 +535,23 @@
                 if (dlCommunity) {
                     dlCommunity.href = platform === 'windows' ? urls.windows : urls.macSilicon;
                 }
-
-                const versionEl = document.getElementById('dlVersion');
-                if (versionEl) versionEl.textContent = tag;
             }
 
-            function applyFromOSS(tag) {
-                const ver = tag.replace(/^v/, '');
-                const gh  = `https://github.com/PM-Shawn/Abu-Cowork/releases/download/${tag}`;
-                applyLinks(tag, {
-                    macSilicon: `${gh}/Abu_${ver}_aarch64.dmg`,
-                    macIntel:   `${gh}/Abu_${ver}_x64.dmg`,
-                    windows:    `${OSS_BASE}/releases/${tag}/Abu_${ver}_x64-setup.exe`,
-                });
-            }
-
-            function applyFromGitHub(release) {
-                const tag    = release.tag_name;
-                const assets = release.assets || [];
-                // Binaries are on OSS, not GitHub — if assets empty, fall back to OSS pattern
-                if (!assets.length) {
-                    applyFromOSS(tag);
-                    return;
+            function trustedDownloadUrl(value, extension, version) {
+                const url = new URL(value);
+                const releasePath = `/releases/${version}/`;
+                if (url.origin !== OSS_BASE || !url.pathname.startsWith(releasePath) || !url.pathname.toLowerCase().endsWith(extension)) {
+                    throw new Error('Untrusted installer URL');
                 }
-                const find = (re) => {
-                    const a = assets.find(a => re.test(a.name));
-                    return a ? a.browser_download_url : GH_LATEST;
-                };
-                applyLinks(tag, {
-                    macSilicon: find(/aarch64.*\.dmg$/i),
-                    macIntel:   find(/x64.*\.dmg$/i),
-                    windows:    find(/setup\.exe$/i),
-                });
+                return url.href;
             }
 
-            // ── Localized release notes (What's new), rendered from latest.json ──
+            function markDownloadUnavailable() {
+                const label = document.getElementById('dlPrimaryLabel');
+                if (label) label.textContent = 'Download unavailable';
+            }
+
+            // ── Localized release notes (What's new) ──
             function escapeHtml(s) {
                 return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
             }
@@ -586,33 +577,44 @@
                 if (inList) html += '</ul>';
                 return html;
             }
+            // Paint the "What's new" panel from a version label + Markdown body.
+            function paintNotes(version, notes) {
+                notes = (notes || '').trim();
+                const sec = document.getElementById('whatsnew');
+                const body = document.getElementById('wnBody');
+                const ver = document.getElementById('wnVersion');
+                // Skip the "See {github-url}" fallback stub — nothing useful to render.
+                if (!sec || !body || !notes || /^see\s+https?:\/\//i.test(notes)) return;
+                body.innerHTML = renderMarkdown(notes);
+                if (ver && version) ver.textContent = version;
+                sec.hidden = false;
+            }
+
             function renderNotes(data) {
                 try {
-                    const raw = (document.documentElement.lang || 'en').toLowerCase();
-                    const key = raw.indexOf('zh') === 0 ? 'zh-CN' : 'en-US';
                     const i18n = data.notes_i18n || {};
-                    const notes = (i18n[key] || i18n['en-US'] || data.notes || '').trim();
-                    const sec = document.getElementById('whatsnew');
-                    const body = document.getElementById('wnBody');
-                    const ver = document.getElementById('wnVersion');
-                    // Skip the "See {github-url}" fallback stub — nothing useful to render.
-                    if (!sec || !body || !notes || /^see\s+https?:\/\//i.test(notes)) return;
-                    body.innerHTML = renderMarkdown(notes);
-                    if (ver && data.version) ver.textContent = data.version;
-                    sec.hidden = false;
+                    const key = (document.documentElement.lang || 'en').toLowerCase().indexOf('zh') === 0 ? 'zh-CN' : 'en-US';
+                    paintNotes(data.version, i18n[key] || '');
                 } catch (e) { /* leave the section hidden on any error */ }
             }
 
-            // Try OSS first, fall back to GitHub API
-            fetch(OSS_LATEST, { cache: 'no-cache' })
+            function applyMetadata(data) {
+                if (data.schema_version !== 1 || !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(data.version || '')) {
+                    throw new Error('Invalid release metadata');
+                }
+                const downloads = data.downloads || {};
+                applyLinks({
+                    macSilicon: trustedDownloadUrl(downloads['mac-arm64']?.url, '.dmg', data.version),
+                    macIntel: trustedDownloadUrl(downloads['mac-x64']?.url, '.dmg', data.version),
+                    windows: trustedDownloadUrl(downloads['windows-x64']?.url, '.exe', data.version),
+                });
+                renderNotes(data);
+            }
+
+            fetch(RELEASE_METADATA, { cache: 'no-cache' })
                 .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-                .then(d => { applyFromOSS(d.version); renderNotes(d); })
-                .catch(() =>
-                    fetch(GH_API)
-                        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-                        .then(d => applyFromGitHub(d))
-                        .catch(() => { /* both failed, links stay on GH_LATEST page */ })
-                );
+                .then(applyMetadata)
+                .catch(markDownloadUnavailable);
 
             // Dropdown toggle
             const chevron = document.getElementById('dlChevron');
@@ -650,17 +652,28 @@
         // Mobile nav toggle
         const navToggle = document.getElementById('navToggle');
         const navLinks = document.getElementById('navLinks');
+        const closeNavigation = () => {
+            navLinks.classList.remove('open');
+            navToggle.classList.remove('open');
+            navToggle.setAttribute('aria-expanded', 'false');
+            navToggle.setAttribute('aria-label', 'Open navigation menu');
+        };
         navToggle.addEventListener('click', () => {
-            navLinks.classList.toggle('open');
-            navToggle.classList.toggle('open');
+            const isOpen = navLinks.classList.toggle('open');
+            navToggle.classList.toggle('open', isOpen);
+            navToggle.setAttribute('aria-expanded', String(isOpen));
+            navToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
         });
 
         // Close mobile nav on link click
         navLinks.querySelectorAll('.nav-link').forEach(link => {
-            link.addEventListener('click', () => {
-                navLinks.classList.remove('open');
-                navToggle.classList.remove('open');
-            });
+            link.addEventListener('click', closeNavigation);
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && navLinks.classList.contains('open')) {
+                closeNavigation();
+                navToggle.focus();
+            }
         });
 
         // Screenshot tabs

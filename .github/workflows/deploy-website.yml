@@ -9,6 +9,10 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      - 'docs/User-Guide*.md'
+      - 'docs/Installation-Guide*.md'
+      - 'scripts/website-download-links.test.mjs'
+      - 'scripts/website-docs.test.mjs'
       - '.github/workflows/deploy-website.yml'
   workflow_dispatch:
 
@@ -22,7 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Verify website content
+        run: npm run test:website
 
       - name: Prepare SSH key
         run: |

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { current } from 'immer';
 import type { Message, Conversation, AgentStatus, RetryInfo, TokenUsage, ConversationStatus, ToolCallForContext, ToolResultContent, ToolCall, NoticeCardAction, SandboxRecoveryAction, ToolExecutionMetadata, UserQuestionResult } from '../types';
 import type { ExecutionStepSnapshot, PlannedStep } from '../types/execution';
 import { useWorkspaceStore } from './workspaceStore';
@@ -17,6 +18,7 @@ import type { PermissionMode } from '../core/permissions/permissionMode';
 import type { ChatReference } from '@/types/chatReference';
 import { getI18n } from '../i18n';
 import { TOOL_NAMES } from '../core/tools/toolNames';
+import { resetSessionPromotions } from '../core/tools/toolSearch';
 import {
   clearConversationComposerDraft,
   getComposerDraftScopeForEnterpriseMode,
@@ -27,10 +29,38 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
-/** Extra safety net for messages coming in via import — ensures no streaming
- * flag survives even if the source bundle was built by a broken exporter. */
-export function sanitizeImportedMessage(msg: Message): Message {
+const ACTIVE_RUN_STATES = new Set<Message['runState']>(['pending', 'accepted', 'running', 'recovering']);
+const TERMINAL_RUN_STATES = new Set<Message['runState']>([
+  'completed',
+  'failed',
+  'connection-failed',
+  'interrupted',
+]);
+
+function recoverInterruptedUserRun(msg: Message, answeredLoopIds?: ReadonlySet<string>): Message {
+  if (msg.role !== 'user' || !ACTIVE_RUN_STATES.has(msg.runState)) return msg;
+  // A stale-active row whose loop demonstrably produced a substantive reply
+  // did complete — only its terminal runState revision was lost (the immer
+  // draft-leak fixed alongside this shipped every image-carrying row that
+  // way, including all of v0.40.0's). Branding those rows "发送失败" invites
+  // a retry of a turn that already succeeded.
+  if (msg.loopId && answeredLoopIds?.has(msg.loopId)) {
+    return { ...msg, runState: 'completed' };
+  }
   return {
+    ...msg,
+    runState: 'failed',
+    runError: getI18n().chat.runRecoveredAfterRestart,
+  };
+}
+
+/** Extra safety net for messages coming in via import — ensures no streaming
+ * flag survives even if the source bundle was built by a broken exporter.
+ * Pass the bundle's `collectAnsweredLoopIds` so a stale-active row whose loop
+ * demonstrably replied is inferred completed here too — without it, the same
+ * ledger that loads clean from disk imports branded "发送失败". */
+export function sanitizeImportedMessage(msg: Message, answeredLoopIds?: ReadonlySet<string>): Message {
+  return recoverInterruptedUserRun({
     ...msg,
     isStreaming: false,
     toolCalls: msg.toolCalls?.map((tc) => {
@@ -41,13 +71,45 @@ export function sanitizeImportedMessage(msg: Message): Message {
       } = tc;
       return { ...safeToolCall, isExecuting: false };
     }),
-  };
+  }, answeredLoopIds);
+}
+
+/** A non-ghost assistant row: real text, tool activity, or thinking. Shared
+ * by the ghost filter below and the completed-run inference above it. */
+function isSubstantiveAssistant(msg: Message): boolean {
+  if (msg.role !== 'assistant') return false;
+  const text = typeof msg.content === 'string'
+    ? msg.content
+    : msg.content.filter(c => c.type === 'text').map(c => (c as { type: 'text'; text: string }).text).join('');
+  return text.trim().length > 0
+    || (msg.toolCalls?.length ?? 0) > 0
+    || (msg.toolCallsForContext?.length ?? 0) > 0
+    || !!msg.thinking;
 }
 
 /** Strip ghost assistant messages and clear stale isStreaming flags after loading from disk.
  * Ghost messages are empty assistant placeholders written before content arrived
  * (crash / network failure before streaming started). They must not reach the LLM. */
+/** loopIds whose turn demonstrably finished: a substantive assistant reply
+ * bearing `usage`. Substantive text alone is not proof — a stream that died
+ * mid-sentence leaves non-empty text too, and inferring 'completed' there
+ * would hide the retry affordance behind a half reply. `usage` is only
+ * written at a clean stream end (message_stop), so it separates the two:
+ * every normally-finished turn carries it (verified across the draft-leak
+ * era's ledgers), a crashed stream never does. Shared by the disk-load and
+ * import paths so the same ledger sanitizes identically through either. */
+export function collectAnsweredLoopIds(messages: readonly Message[]): ReadonlySet<string> {
+  const answeredLoopIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.loopId && msg.role === 'assistant' && msg.usage && isSubstantiveAssistant(msg)) {
+      answeredLoopIds.add(msg.loopId);
+    }
+  }
+  return answeredLoopIds;
+}
+
 export function sanitizeLoadedMessages(messages: Message[]): Message[] {
+  const answeredLoopIds = collectAnsweredLoopIds(messages);
   return messages
     .map((msg) => {
       const toolCalls = msg.toolCalls?.map((tc) => {
@@ -64,22 +126,13 @@ export function sanitizeLoadedMessages(messages: Message[]): Message[] {
             : tc.sandboxRecoveryAction,
         };
       });
-      return {
+      return recoverInterruptedUserRun({
         ...msg,
         isStreaming: false,
         toolCalls,
-      };
+      }, answeredLoopIds);
     })
-    .filter(msg => {
-      if (msg.role !== 'assistant') return true;
-      const text = typeof msg.content === 'string'
-        ? msg.content
-        : msg.content.filter(c => c.type === 'text').map(c => (c as { type: 'text'; text: string }).text).join('');
-      return text.trim().length > 0
-        || (msg.toolCalls?.length ?? 0) > 0
-        || (msg.toolCallsForContext?.length ?? 0) > 0
-        || !!msg.thinking;
-    });
+    .filter(msg => msg.role !== 'assistant' || isSubstantiveAssistant(msg));
 }
 
 /** Build an in-memory Conversation + Meta from a validated ShareBundle.
@@ -101,7 +154,12 @@ function buildImportedFromShareBundle(bundle: ShareBundle): { conv: Conversation
     title: bundle.conversation.title,
     createdAt: bundle.conversation.createdAt,
     updatedAt: bundle.conversation.updatedAt,
-    messages: bundle.messages.map(sanitizeImportedMessage),
+    // Explicit lambda — bare `.map(sanitizeImportedMessage)` would feed the
+    // array index into the answeredLoopIds parameter.
+    messages: (() => {
+      const answered = collectAnsweredLoopIds(bundle.messages);
+      return bundle.messages.map((m) => sanitizeImportedMessage(m, answered));
+    })(),
     status: 'idle',
     importedFrom,
   };
@@ -171,20 +229,40 @@ const abortControllers: Map<string, AbortController> = new Map();
 // otherwise the UI can show a completed assistant turn while its fire-and-
 // forget JSONL append/replace is still in flight. Keep the promises grouped
 // by conversation so the dispatch bridge can await only the run it owns.
-const pendingConversationPersistence = new Map<string, Promise<void>>();
+interface ConversationPersistenceState {
+  tail: Promise<void>;
+  firstError?: unknown;
+}
+
+const pendingConversationPersistence = new Map<string, ConversationPersistenceState>();
 
 function trackConversationPersistence(
   convId: string,
   operation: () => Promise<unknown>,
 ): void {
-  const previous = pendingConversationPersistence.get(convId) ?? Promise.resolve();
-  const tracked = previous
+  const state = pendingConversationPersistence.get(convId) ?? {
+    tail: Promise.resolve(),
+  };
+  const tracked = state.tail
+    // A failed write must not permanently poison the serial queue: later
+    // mutations still get a chance to repair disk state. The first error is
+    // retained separately and surfaced by the durability barrier below.
+    .catch(() => undefined)
     .then(operation)
     .then(() => undefined)
-    .catch(() => undefined);
-  pendingConversationPersistence.set(convId, tracked);
-  void tracked.finally(() => {
-    if (pendingConversationPersistence.get(convId) === tracked) {
+    .catch((error: unknown) => {
+      state.firstError ??= error;
+      throw error;
+    });
+  state.tail = tracked;
+  pendingConversationPersistence.set(convId, state);
+  // Attach a rejection handler immediately so fire-and-forget store actions
+  // never produce an unhandled rejection. The error remains in `state` until
+  // an explicit barrier consumes it.
+  void tracked.catch(() => undefined).finally(() => {
+    if (pendingConversationPersistence.get(convId) === state
+      && state.tail === tracked
+      && state.firstError === undefined) {
       pendingConversationPersistence.delete(convId);
     }
   });
@@ -198,10 +276,19 @@ function trackConversationPersistence(
  */
 export async function waitForConversationPersistence(convId: string): Promise<void> {
   while (true) {
-    const pending = pendingConversationPersistence.get(convId);
-    if (!pending) return;
-    await pending;
-    if (pendingConversationPersistence.get(convId) === pending) return;
+    const state = pendingConversationPersistence.get(convId);
+    if (!state) return;
+    const pending = state.tail;
+    try {
+      await pending;
+    } catch {
+      // `firstError` below is the authoritative failure. Keep looping if a
+      // newer queued mutation appeared while this snapshot was in flight.
+    }
+    if (pendingConversationPersistence.get(convId) !== state || state.tail !== pending) continue;
+    pendingConversationPersistence.delete(convId);
+    if (state.firstError !== undefined) throw state.firstError;
+    return;
   }
 }
 
@@ -262,24 +349,28 @@ function findTargetMessage(messages: Message[] | undefined, msgId: string): Mess
 }
 
 /**
- * Best-effort catalog count adjustment after a message deletion
- * (message-storage P1 step 2). Shared by deleteMessage / deleteMessagesFrom /
- * deleteLoopMessages (code-review fix #9 — was three copies of this same
- * block). This is a DISPLAY-LEVEL / session-level count nudge, not a claim
- * that the JSONL file itself shrank by `removedCount` — delete never
- * rewrites messages.jsonl, so the catalog's message_count would otherwise
- * drift upward forever relative to what's actually rendered. A wrong/stale
- * bump here is harmless and self-heals: `catalog_reconcile` re-derives the
- * true count from JSONL on next startup (same accepted-drift posture as the
- * P0 write-through comment elsewhere in this file). Do NOT "fix" this into
- * an exact JSONL-truth accounting — that's an intentional trade-off, not an
- * oversight.
+ * Best-effort catalog count adjustment for the one case `deleteMessagesFrom`
+ * cannot durably reconcile: a truncate whose `from` id never reached disk
+ * (see `appendTruncateEvent`'s skip guard) writes no ledger event at all, so
+ * there is nothing for `catalogReindexConversation` to re-derive from. This
+ * is a DISPLAY-LEVEL / session-level count nudge, not a claim that the JSONL
+ * file itself shrank by `removedCount`. A wrong/stale bump here is harmless
+ * and self-heals: `catalog_reconcile` re-derives the true count from JSONL on
+ * next startup (same accepted-drift posture as the P0 write-through comment
+ * elsewhere in this file). Do NOT "fix" this into an exact JSONL-truth
+ * accounting — that's an intentional trade-off, not an oversight. (Plan
+ * stage 3 retired the other two former callers, `deleteMessage` and
+ * `deleteLoopMessages` — every durable truncate now goes through the exact
+ * reindex path instead of this nudge.)
+ *
+ * Returns a promise (its only caller now runs inside `trackConversationPersistence`'s
+ * tracked operation and awaits it) so `waitForConversationPersistence` actually
+ * waits for this fallback bump instead of racing ahead of it.
  */
-function bumpCatalogAfterDelete(convId: string, removedCount: number): void {
+async function bumpCatalogAfterDelete(convId: string, removedCount: number): Promise<void> {
   if (removedCount <= 0) return;
-  import('../core/session/conversationStorage').then(({ catalogBumpCount }) => {
-    catalogBumpCount(convId, -removedCount, Date.now(), null).catch(() => {});
-  });
+  const { catalogBumpCount } = await import('../core/session/conversationStorage');
+  await catalogBumpCount(convId, -removedCount, Date.now(), null).catch(() => {});
 }
 
 let flushScheduled = false;
@@ -441,9 +532,25 @@ interface ChatActions {
 
   // New message operations
   editMessage: (convId: string, messageId: string, newContent: string) => void;
-  deleteMessage: (convId: string, messageId: string, opts?: { skipCatalogBump?: boolean }) => void;
+  updateUserMessageRun: (
+    convId: string,
+    messageId: string,
+    patch: {
+      state: NonNullable<Message['runState']>;
+      error?: string;
+      content?: Message['content'];
+      skill?: Message['skill'];
+      delegateAgent?: Message['delegateAgent'];
+    },
+  ) => void;
+  /**
+   * The sole delete/truncate primitive (plan stage 3 — `deleteMessage` and
+   * `deleteLoopMessages` are retired). Cuts `messageId` and everything after
+   * it from the in-memory slice, then durably persists the cut via
+   * `appendTruncateEvent` — see the implementation for the exact wiring and
+   * the in-memory-only fallback.
+   */
   deleteMessagesFrom: (convId: string, messageId: string) => void;
-  deleteLoopMessages: (convId: string, loopId: string) => void;
   updateMessageThinking: (convId: string, thinking: string, msgId?: string) => void;
   updateMessageThinkingDuration: (convId: string, duration: number, msgId?: string) => void;
   updateMessageUsage: (convId: string, usage: TokenUsage, msgId?: string) => void;
@@ -483,7 +590,13 @@ interface ChatActions {
    * action's own doc for the full branching rationale.
    */
   cancelStreaming: (convId: string, opts?: { fromSidecarFrame?: boolean }) => void;
-  clearAbortController: (convId: string) => void;
+  /**
+   * Drop the conversation's registered controller. Pass `owned` to make the
+   * clear ownership-checked: a run tearing down asynchronously must not
+   * delete a controller that a NEWER run has since registered for the same
+   * conversation, which would leave that run's Stop button inert.
+   */
+  clearAbortController: (convId: string, owned?: AbortController) => void;
   /**
    * Clear a conversation's single-turn-lifecycle skill activation state
    * (`activeSkills`/`activeSkillArgs`). Extracted from an agentLoop.ts
@@ -774,6 +887,7 @@ export const useChatStore = create<ChatStore>()(
         // Clean up per-conversation state in external modules
         clearInputQueue(id);
         clearSkillHooksByConversation(id);
+        resetSessionPromotions(id);
         useTaskExecutionStore.getState().clearConversation(id);
         clearConversationComposerDraft(
           id,
@@ -926,10 +1040,10 @@ export const useChatStore = create<ChatStore>()(
             // code-review fix #1): in P0 there is no partial load, so
             // conv.messages is always the full history. Re-derivation is
             // both correct AND self-healing across deletes/edits/retries —
-            // deleteMessage/deleteMessagesFrom/deleteLoopMessages mutate
-            // conv.messages but never adjust conversationIndex.messageCount,
-            // so an increment-only counter drifts upward forever while
-            // re-derivation always reflects reality.
+            // deleteMessagesFrom mutates conv.messages but never adjusts
+            // conversationIndex.messageCount itself, so an increment-only
+            // counter drifts upward forever while re-derivation always
+            // reflects reality.
             if (state.conversationIndex[convId]) {
               state.conversationIndex[convId].messageCount = conv.messages.length;
               state.conversationIndex[convId].updatedAt = conv.updatedAt;
@@ -1070,10 +1184,16 @@ export const useChatStore = create<ChatStore>()(
         // only hit disk when finishStreaming / turn-boundary replaceMessageById fires —
         // so a crash/force-quit mid-stream (or a late-arriving result after the
         // enclosing message was already snapshotted) loses toolCalls on reload.
+        //
+        // This goes to the stream snapshot rather than the ledger: it fires once
+        // per tool result, and each write carries the whole message including
+        // every earlier result, so appending here would cost O(N²) bytes within
+        // a single tool-heavy turn. The turn-boundary checkpoint in agentLoop is
+        // what commits the batch to the ledger.
         const updatedMsg = get().conversations[convId]?.messages.find((m) => m.id === messageId);
         if (updatedMsg) {
-          import('../core/session/conversationStorage').then(({ replaceMessageById }) => {
-            replaceMessageById(convId, updatedMsg).catch(() => {});
+          import('../core/session/conversationStorage').then(({ snapshotMessageRevision }) => {
+            snapshotMessageRevision(convId, updatedMsg).catch(() => {});
           });
         }
       },
@@ -1175,6 +1295,46 @@ export const useChatStore = create<ChatStore>()(
       },
 
       // New message operations
+      updateUserMessageRun: (convId, messageId, patch) => {
+        let updatedMessage: Message | undefined;
+        set((state) => {
+          const conv = state.conversations[convId];
+          const message = conv?.messages.find((candidate) => candidate.id === messageId);
+          if (!conv || !message || message.role !== 'user') return;
+
+          message.runState = patch.state;
+          if (TERMINAL_RUN_STATES.has(patch.state)) {
+            message.runEndedAt ??= Date.now();
+          } else {
+            delete message.runEndedAt;
+          }
+          if (patch.error) message.runError = patch.error;
+          else delete message.runError;
+          if ('content' in patch && patch.content !== undefined) message.content = patch.content;
+          if ('skill' in patch) message.skill = patch.skill;
+          if ('delegateAgent' in patch) message.delegateAgent = patch.delegateAgent;
+          conv.updatedAt = Date.now();
+          conv.contextCache = undefined;
+          // `current`, not a spread: `message` is an immer draft, and a shallow
+          // copy keeps nested values (a multimodal `content` ARRAY) as draft
+          // proxies that are revoked the moment this producer returns. The
+          // tracked persistence below then serializes a revoked proxy —
+          // "Cannot perform 'IsArray' on a proxy that has been revoked" — so
+          // every runState revision for an image-carrying row failed to
+          // persist and the ledger showed the run stuck at `pending`.
+          updatedMessage = current(message);
+        });
+
+        if (!updatedMessage) return;
+        const messageToPersist = updatedMessage;
+        trackConversationPersistence(
+          convId,
+          () => import('../core/session/conversationStorage').then(({ replaceMessageByIdStrict }) =>
+            replaceMessageByIdStrict(convId, messageToPersist),
+          ),
+        );
+      },
+
       editMessage: (convId, messageId, newContent) => {
         set((state) => {
           const msg = state.conversations[convId]?.messages.find((m) => m.id === messageId);
@@ -1196,60 +1356,64 @@ export const useChatStore = create<ChatStore>()(
         });
       },
 
-      deleteMessage: (convId, messageId, opts) => {
-        let removedCount = 0;
-        set((state) => {
-          const conv = state.conversations[convId];
-          if (conv) {
-            const before = conv.messages.length;
-            conv.messages = conv.messages.filter((m) => m.id !== messageId);
-            removedCount = before - conv.messages.length;
-            conv.updatedAt = Date.now();
-            conv.contextCache = undefined;  // Invalidate compression cache
-          }
-        });
-        // See bumpCatalogAfterDelete's doc comment for why this is an
-        // intentionally approximate, self-healing display-level nudge.
-        // `skipCatalogBump` (code-review fix #8): the agentLoop ghost-message
-        // deletion path passes this when the placeholder was never durably
-        // appended to messages.jsonl — appendMessage's own catalog `+1` only
-        // fires once the disk-append path is actually taken (see
-        // `isMessageWrittenToDisk`), so a ghost that never reached disk has
-        // no `+1` to offset and an unconditional `-1` here would transiently
-        // undercount the catalog until the next turn-end reindex.
-        if (!opts?.skipCatalogBump) bumpCatalogAfterDelete(convId, removedCount);
-      },
-
       deleteMessagesFrom: (convId, messageId) => {
-        let removedCount = 0;
+        let removedIds: string[] = [];
+        let survivingTailId: string | undefined;
+        let metaToPersist: ConversationMeta | undefined;
         set((state) => {
           const conv = state.conversations[convId];
           if (conv) {
             const idx = conv.messages.findIndex((m) => m.id === messageId);
             if (idx !== -1) {
-              removedCount = conv.messages.length - idx;
+              removedIds = conv.messages.slice(idx).map((m) => m.id);
+              // The id of the last message SURVIVING the cut — omitted (left
+              // undefined) when truncating from the conversation's first
+              // message (plan §3.2's `pid` definition).
+              survivingTailId = idx > 0 ? conv.messages[idx - 1].id : undefined;
               conv.messages = conv.messages.slice(0, idx);
               conv.updatedAt = Date.now();
               conv.contextCache = undefined;  // Invalidate compression cache
+              const meta = state.conversationIndex[convId];
+              if (meta) {
+                meta.messageCount = conv.messages.length;
+                meta.updatedAt = conv.updatedAt;
+                // `current`, not a spread: same revoked-draft hazard as
+                // updateUserMessageRun above — `meta.model` is a nested object,
+                // so a shallow copy of the draft hands the async persistence a
+                // child proxy that is revoked when this producer returns.
+                metaToPersist = current(meta);
+              }
             }
           }
         });
-        bumpCatalogAfterDelete(convId, removedCount);
-      },
-
-      deleteLoopMessages: (convId, loopId) => {
-        let removedCount = 0;
-        set((state) => {
-          const conv = state.conversations[convId];
-          if (conv) {
-            const before = conv.messages.length;
-            conv.messages = conv.messages.filter((m) => m.loopId !== loopId);
-            removedCount = before - conv.messages.length;
-            conv.updatedAt = Date.now();
-            conv.contextCache = undefined;  // Invalidate compression cache
-          }
-        });
-        bumpCatalogAfterDelete(convId, removedCount);
+        if (removedIds.length === 0) return;
+        const finalMeta = metaToPersist;
+        const pid = survivingTailId;
+        const removedCount = removedIds.length;
+        // Durable persistence (plan stage 3): appendTruncateEvent decides
+        // whether there is anything on disk to cut. When it durably writes
+        // the event, catalogReindexConversation derives an EXACT count from
+        // the folded ledger — no approximate bump needed. When it reports
+        // nothing durable (a pure in-memory ghost never appended to disk),
+        // there is no ledger event and thus nothing for a reindex to
+        // reconcile, so fall back to the same approximate display-level nudge
+        // the retired deleteMessage's skipCatalogBump path used to apply.
+        trackConversationPersistence(
+          convId,
+          () => import('../core/session/conversationStorage').then(async ({
+            appendTruncateEvent,
+            updateIndexEntry,
+            catalogReindexConversation,
+          }) => {
+            const wrote = await appendTruncateEvent(convId, messageId, { pid, removedIds });
+            if (wrote) {
+              if (finalMeta) await updateIndexEntry(finalMeta);
+              await catalogReindexConversation(convId);
+            } else {
+              await bumpCatalogAfterDelete(convId, removedCount);
+            }
+          }),
+        );
       },
 
       updateMessageThinking: (convId, thinking, msgId) => {
@@ -1296,6 +1460,25 @@ export const useChatStore = create<ChatStore>()(
             msg.isStreaming = false;
           }
         });
+        // Persist the *intent* immediately, for the same reason updateToolCall
+        // persists the result: this call clears isStreaming, which switches off
+        // the streaming snapshot loop, so without an explicit write the pending
+        // tool calls would not reach disk until the batch finishes. A crash
+        // between here and that point would replay as "the model never called
+        // anything" even though a side effect (rm, write_file, an API call) had
+        // already run — the recovery path could not tell "not started" from
+        // "started, unrecorded", and a retry would execute it twice.
+        //
+        // Same routing as updateToolCall: this is mid-turn state, so it belongs
+        // in the stream snapshot (durable, folded in on load) rather than as a
+        // permanent ledger line that the batch checkpoint would supersede
+        // seconds later anyway.
+        const updatedMsg = get().conversations[convId]?.messages.find((m) => m.id === messageId);
+        if (updatedMsg) {
+          import('../core/session/conversationStorage').then(({ snapshotMessageRevision }) => {
+            snapshotMessageRevision(convId, updatedMsg).catch(() => {});
+          });
+        }
       },
 
       updateMessageUsage: (convId, usage, msgId) => {
@@ -1428,7 +1611,10 @@ export const useChatStore = create<ChatStore>()(
           // Deleting it here used to abandon run ownership while the
           // `agent.run` RPC could remain pending forever, leaving the UI on
           // "thinking" with no controller/session able to finish cleanup.
-          setComputerUseActive(false);
+          // Pass convId — see computerUseStatus.ts's ownership guard doc: a
+          // stale deactivate must never clobber a DIFFERENT conversation's
+          // now-active CU session.
+          setComputerUseActive(false, convId);
           import('@tauri-apps/api/core').then(({ invoke }) => {
             invoke('hide_screen_border').catch(() => {});
             invoke('window_show').catch(() => {});
@@ -1446,8 +1632,10 @@ export const useChatStore = create<ChatStore>()(
           controller.abort();
           abortControllers.delete(convId);
         }
-        // Clean up Computer Use overlay and status on abort (synchronous imports for reliability)
-        setComputerUseActive(false);
+        // Clean up Computer Use overlay and status on abort (synchronous
+        // imports for reliability). Pass convId — see computerUseStatus.ts's
+        // ownership guard doc.
+        setComputerUseActive(false, convId);
         import('@tauri-apps/api/core').then(({ invoke }) => {
           invoke('hide_screen_border').catch(() => {});
           invoke('window_show').catch(() => {});
@@ -1473,19 +1661,12 @@ export const useChatStore = create<ChatStore>()(
                 || !!lastMsg.thinking?.trim()
                 || !!lastMsg.toolCalls?.length
                 || !!lastMsg.toolCallsForContext?.length;
-              // Persist the user-stop terminal independently of the cosmetic
-              // markdown marker. Tool-only turns have no assistant text to
-              // append that marker to, but still need to reopen as "Stopped"
-              // rather than being inferred as successfully completed.
+              // Persist a compatibility stop terminal on assistant activity.
+              // The canonical run terminal now lives on the user message's
+              // `runState`; this field keeps older transcripts and tool-only
+              // turns readable without injecting presentation text into content.
               if (hasVisibleActivity && lastMsg.stopReason !== 'user') {
                 lastMsg.stopReason = 'user';
-                mutated = true;
-              }
-              // Append cancellation notice — only when real streamed content
-              // exists, so an untouched placeholder never becomes a
-              // "*[已停止]*"-only bubble.
-              if (typeof lastMsg.content === 'string' && lastMsg.content.trim().length > 0) {
-                lastMsg.content += '\n\n*[已停止]*';
                 mutated = true;
               }
             }
@@ -1519,21 +1700,38 @@ export const useChatStore = create<ChatStore>()(
           state.thinkingStartTime = null;
         });
 
-        // Persist the stop mutation (marker + cancelled tool calls) — without
+        // Persist the stop mutation (terminal + cancelled tool calls) — without
         // this the live view shows "已停止" while reload shows the pre-stop
         // JSONL snapshot (often a blank bubble).
+        //
+        // MUST go through trackConversationPersistence, not a bare
+        // fire-and-forget: the assistant placeholder's own append (addMessage's
+        // diskAppend) rides that per-conversation serial queue, and under load
+        // it can still be in flight when Stop lands. An untracked
+        // replaceMessageById then overtakes the append, finds no row on disk,
+        // and hits the upsert guard's silent no-op (`id-not-found`) — the
+        // placeholder lands moments later as a permanent content:"" ghost and
+        // the visible partial reply is durably lost. frameApplier.ts defends
+        // its session replacements against exactly this with
+        // waitForConversationPersistence; chaining onto the tracked queue
+        // gives this path the same ordering AND makes the write visible to
+        // finalizeAbortedRun's durability barrier.
         if (cancelledMsgId) {
           const finalMsg = useChatStore.getState().conversations[convId]
             ?.messages.find((m) => m.id === cancelledMsgId);
           if (finalMsg) {
-            import('../core/session/conversationStorage').then(({ replaceMessageById }) => {
-              replaceMessageById(convId, finalMsg).catch(() => {});
-            }).catch(() => {});
+            trackConversationPersistence(
+              convId,
+              () => import('../core/session/conversationStorage').then(({ replaceMessageById }) =>
+                replaceMessageById(convId, finalMsg)
+              ),
+            );
           }
         }
       },
 
-      clearAbortController: (convId) => {
+      clearAbortController: (convId, owned) => {
+        if (owned && abortControllers.get(convId) !== owned) return;
         abortControllers.delete(convId);
       },
 
@@ -1824,7 +2022,10 @@ export const useChatStore = create<ChatStore>()(
             id: newId,
             status: 'idle',
             completedAt: undefined,
-            messages: conv.messages.map(sanitizeImportedMessage),
+            messages: (() => {
+              const answered = collectAnsweredLoopIds(conv.messages);
+              return conv.messages.map((m) => sanitizeImportedMessage(m, answered));
+            })(),
           };
 
           const meta: ConversationMeta = {
@@ -1890,11 +2091,17 @@ export const useChatStore = create<ChatStore>()(
         if (!get().conversationIndex[convId]) return;
 
         try {
-          const { loadMessages } = await import('../core/session/conversationStorage');
-          const messages = sanitizeLoadedMessages(await loadMessages(convId));
+          const { loadMessages, replaceMessageById } = await import('../core/session/conversationStorage');
+          const loadedMessages = await loadMessages(convId);
+          const messages = sanitizeLoadedMessages(loadedMessages);
           const meta = get().conversationIndex[convId];
           if (!meta) return;
 
+          const recoveredMessages = messages.filter((message, index) => (
+            message.role === 'user'
+            && message.runState === 'failed'
+            && ACTIVE_RUN_STATES.has(loadedMessages[index]?.runState)
+          ));
           set((state) => {
             state.conversations[convId] = {
               id: meta.id,
@@ -1914,6 +2121,15 @@ export const useChatStore = create<ChatStore>()(
               importedFrom: meta.importedFrom,
             };
           });
+
+          // Recovery persistence is best-effort. The sanitized in-memory
+          // conversation must remain available even if a disk replacement
+          // fails (for example, a transient permission or I/O error). A
+          // failed repair must never fall through to the outer load catch
+          // and replace a successfully-read conversation with an empty one.
+          await Promise.allSettled(
+            recoveredMessages.map((message) => replaceMessageById(convId, message)),
+          );
         } catch {
           // Load failed — create an empty conversation so the chat view still
           // renders (instead of falling through to the welcome page)
