@@ -6,7 +6,6 @@ import {
   Globe,
   Palette,
   HelpCircle,
-  MessageCircle,
   RefreshCw,
   RotateCcw,
   Download,
@@ -261,13 +260,6 @@ export default function AccountMenu({ onEditProfile }: { onEditProfile: () => vo
 
           {/* Help */}
           <MenuRow icon={HelpCircle} label={t.sidebar.help} onClick={() => run(() => openGuide())} />
-
-          {/* Feedback */}
-          <MenuRow
-            icon={MessageCircle}
-            label={t.about.feedback}
-            onClick={() => run(() => openSystemSettings('feedback'))}
-          />
 
           {ABU_DISTRIBUTION === 'upstream-official' && (
             <button

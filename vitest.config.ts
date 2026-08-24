@@ -19,6 +19,8 @@ export default defineConfig({
     // Mirror vite.config.ts so modules that consume APP_VERSION via
     // `__APP_VERSION__` (see src/utils/version.ts) don't blow up under vitest.
     __APP_VERSION__: JSON.stringify('test'),
+    __ABU_DISTRIBUTION__: JSON.stringify('abu-project-management'),
+    __ABU_UPSTREAM_BASE_VERSION__: JSON.stringify('0.34.2'),
     // Tests run as the OSS build target (enterprise UI hidden).
     __ENTERPRISE_BUILD__: JSON.stringify(false),
     // Provide a stub URL so modules guarded by `if (!CONSOLE_URL) return`

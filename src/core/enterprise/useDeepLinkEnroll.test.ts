@@ -13,6 +13,7 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 
 const mockGetCurrent = getCurrent as ReturnType<typeof vi.fn>
 const mockOnOpenUrl = onOpenUrl as ReturnType<typeof vi.fn>
+const enrollUrl = (query: string) => `abu-project-management-preview://enroll?${query}`
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -23,8 +24,8 @@ beforeEach(() => {
 
 describe('useDeepLinkEnroll', () => {
   describe('cold-launch URL via getCurrent', () => {
-    it('sets pendingEnroll when app is cold-launched with abu://enroll', async () => {
-      mockGetCurrent.mockResolvedValue(['abu://enroll?server=https://corp.example.com&token=tok123'])
+    it('sets pendingEnroll when app is cold-launched with the Preview protocol', async () => {
+      mockGetCurrent.mockResolvedValue([enrollUrl('server=https://corp.example.com&token=tok123')])
 
       const { result } = renderHook(() => useDeepLinkEnroll())
 
@@ -37,7 +38,7 @@ describe('useDeepLinkEnroll', () => {
     })
 
     it('sets pendingEnroll without token when token param is absent', async () => {
-      mockGetCurrent.mockResolvedValue(['abu://enroll?server=https://corp.example.com'])
+      mockGetCurrent.mockResolvedValue([enrollUrl('server=https://corp.example.com')])
 
       const { result } = renderHook(() => useDeepLinkEnroll())
 
@@ -95,7 +96,7 @@ describe('useDeepLinkEnroll', () => {
       expect(capturedHandler).toBeDefined()
 
       await act(async () => {
-        capturedHandler!(['abu://enroll?server=https://live.example.com&token=livetoken'])
+        capturedHandler!([enrollUrl('server=https://live.example.com&token=livetoken')])
       })
 
       expect(result.current.pendingEnroll).toEqual({
@@ -107,7 +108,7 @@ describe('useDeepLinkEnroll', () => {
 
   describe('dismissEnroll', () => {
     it('clears pendingEnroll when dismissEnroll is called', async () => {
-      mockGetCurrent.mockResolvedValue(['abu://enroll?server=https://corp.example.com'])
+      mockGetCurrent.mockResolvedValue([enrollUrl('server=https://corp.example.com')])
 
       const { result } = renderHook(() => useDeepLinkEnroll())
 

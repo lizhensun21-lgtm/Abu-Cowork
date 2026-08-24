@@ -4,14 +4,15 @@
 
 <img src="website/assets/abu-avatar.png" width="120" height="120" style="border-radius: 24px" />
 
-# Abu
+# Abu Project Management — RC1 Preview
 
-**Your AI Desktop Office Assistant — Just Leave It to Abu**
+**Standalone Project Management edition · Local JSON data**
 
-A locally-run AI desktop assistant inspired by Claude Code's Cowork mode.
-Tell Abu what you need — it reads files, runs commands, writes docs, and builds reports, all on your machine.
+This repository contains an independent Project Management fork based on
+[Abu v0.34.2](https://github.com/PM-Shawn/Abu-Cowork). The RC1 Preview keeps
+project data in a local JSON repository and does not require Java, Docker,
+PostgreSQL, or Spring Boot.
 
-[![Release](https://img.shields.io/github/v/release/PM-Shawn/Abu-Cowork?style=flat-square)](https://github.com/PM-Shawn/Abu-Cowork/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 [Download](#download) · [Quick Start](#quick-start) · [Features](#features) · [User Guide](docs/User-Guide.md) · [Build from Source](#build-from-source)
@@ -39,11 +40,9 @@ Tell Abu what you need — it reads files, runs commands, writes docs, and build
 
 ## What's New
 
-**[Download the latest stable release](https://github.com/PM-Shawn/Abu-Cowork/releases/latest)** · [Read the full changelog](CHANGELOG.md)
+The current application version is `0.1.0-rc.1` (`RC1 Preview`). See [CHANGELOG.md](CHANGELOG.md) for inherited and fork changes.
 
 Recent highlights: **Workspace file tree + code canvas** (browse / preview / edit files in the side panel, CodeMirror source editing with auto-save, preview auto-refresh, version snapshots with rollback), **declarative progress panel** (the model declares its own plan steps and status via `report_plan`), **inline visualization widgets** (charts / HTML / Mermaid rendered inline in chat), **multi-endpoint provider presets** (Volcengine / Bailian / Zhipu access plans as curated presets + a unified add/edit modal), **per-model capabilities** (vision / tools / reasoning / token limits declared per model), plus **doc comment-to-chat**, **full internationalization**, and **signed + notarized macOS builds**.
-
-> Full changelog per release: see [Releases](https://github.com/PM-Shawn/Abu-Cowork/releases).
 
 ## Preview
 
@@ -196,19 +195,18 @@ Turn Abu into your team bot — just @Abu in your chat:
 ### Diagnostics & Troubleshooting
 
 - **One-Click Self-Check** — Settings → Diagnostic, runs through AI service connectivity, data & permissions, MCP, skills, network, app environment
-- **Diagnostic Bundle Export** — When something breaks, package logs / config / version info in one click (API keys and paths auto-redacted) and send it to the maintainer
+- **Diagnostic Bundle Export** — When something breaks, package logs / config / version info in one click (API keys and paths auto-redacted) for local review or an explicitly chosen support channel
 
 > For detailed feature documentation, see the [User Guide](docs/User-Guide.md)
 
 ## Download
 
-Head to [GitHub Releases](https://github.com/PM-Shawn/Abu-Cowork/releases) to download the latest version:
+Preview artifacts are produced from this fork. An upstream Abu package is not
+an Abu Project Management Preview package.
 
 | Platform | File |
 |----------|------|
-| macOS (Apple Silicon) | `Abu-x.x.x-mac-arm64.dmg` |
-| macOS (Intel) | `Abu-x.x.x-mac-x64.dmg` |
-| Windows x64 | `Abu-x.x.x-windows-x64-setup.exe` |
+| Windows x64 | `Abu-Project-Management-RC1-Preview-windows-x64-setup.exe` |
 
 > Official macOS packages are signed and notarized. The Windows installer is current-user only and does not need administrator rights, but remains Authenticode-unsigned; SmartScreen may require **More info → Run anyway**. See the [Installation Guide](docs/Installation-Guide.md).
 
@@ -318,15 +316,15 @@ scope for this baseline.
 ### Development
 
 ```bash
-# Clone the repo
-git clone https://github.com/PM-Shawn/Abu-Cowork.git
-cd Abu-Cowork
+# Clone this fork, then enter its working directory
+git clone <fork-repository-url> Abu-Project-Management
+cd Abu-Project-Management
 
 # Install locked dependencies and prepare the worktree-local Electron runtime
 npm ci
 npm run setup:electron-dev
 
-# Launch the Electron desktop app (dev data is isolated from installed Abu)
+# Launch the Electron desktop app (dev data is isolated from Preview packages)
 npm run electron:dev
 
 # Frontend only (no Rust required)
@@ -428,4 +426,4 @@ Issues and Pull Requests are welcome. Read the [Fork & Distribution Guide](FORKI
 
 ## License
 
-**[Apache License 2.0](LICENSE)** — Free to use, modify, and distribute, including commercial use. Copyright notices must be retained. **Enterprise edition requires a license**, offering team collaboration, SSO, audit logs, and private deployment support. [Contact us](mailto:pmshawn@163.com).
+**[Apache License 2.0](LICENSE)** — Free to use, modify, and distribute, including commercial use. Copyright notices must be retained. This fork preserves the upstream Abu attribution and the `Copyright 2026 Shawn` notice. See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for the packaging notice strategy.

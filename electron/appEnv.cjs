@@ -20,6 +20,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const PRODUCT_IDENTITY = require('./productIdentity.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 // Dev sidecar path (repo layout). The packaged path is resolved per-app via
@@ -48,16 +49,17 @@ function sidecarPathFor(app) {
  * Canonical Electron-shell app-data dir, shared by the sidecar launch env
  * (ABU_APP_DATA_DIR) and the renderer-facing Tauri path/fs handlers
  * (tauriHost.cjs) so both sides agree on where app data lives.
- *  - Dev: `com.abu.app.electron-dev` — DISTINCT from the Tauri dev app's
- *    `com.abu.app.dev` so the two shells never share state while coexisting.
- *  - Packaged: `com.abu.app.electron` — permanently distinct from Tauri's
- *    `com.abu.app`. A release-metadata-gated transition copies whitelisted
- *    data into this root without modifying the old install, preserving
- *    rollback and keeping ordinary unsigned test packages isolated.
+ *  - Dev: retains the existing Electron-development namespace. Preview builds
+ *    never migrate, delete, or overwrite it.
+ *  - Packaged: uses the fork-specific Preview namespace. It is distinct from
+ *    upstream Tauri (`com.abu.app`), upstream Electron
+ *    (`com.abu.app.electron`), and Electron development.
  * @param {import('electron').App} app
  */
 function abuAppDataDir(app) {
-  const folder = app && app.isPackaged ? 'com.abu.app.electron' : 'com.abu.app.electron-dev';
+  const folder = app && app.isPackaged
+    ? PRODUCT_IDENTITY.packagedDomainDataNamespace
+    : PRODUCT_IDENTITY.developmentDomainDataNamespace;
   return path.join(app.getPath('appData'), folder);
 }
 

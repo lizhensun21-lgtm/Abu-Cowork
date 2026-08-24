@@ -40,7 +40,7 @@ describe('i18nRun shim (full-dict, P1-3B-3B)', () => {
     it('getI18n() returns the REAL zh-CN dict object', () => {
       withAgentRunContext('zh-CN', () => {
         expect(getI18n()).toBe(zhCN);
-        expect(getI18n().common.appName).toBe('阿布');
+        expect(getI18n().common.appName).toBe('Abu Project Management');
         expect(getI18n().chat.errorEmptyBody).toBe(zhCN.chat.errorEmptyBody);
       });
     });
@@ -48,7 +48,7 @@ describe('i18nRun shim (full-dict, P1-3B-3B)', () => {
     it('getI18n() returns the REAL en-US dict object', () => {
       withAgentRunContext('en-US', () => {
         expect(getI18n()).toBe(enUS);
-        expect(getI18n().common.appName).toBe('Abu');
+        expect(getI18n().common.appName).toBe('Abu Project Management');
       });
     });
 

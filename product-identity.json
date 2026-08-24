@@ -1,0 +1,16 @@
+{
+  "displayName": "Abu Project Management",
+  "previewLabel": "RC1 Preview",
+  "editionLabel": "Project Management Edition",
+  "distribution": "abu-project-management",
+  "upstreamBaseVersion": "0.34.2",
+  "appId": "com.abu.projectmanagement.preview",
+  "executableName": "Abu Project Management",
+  "protocol": "abu-project-management-preview",
+  "devProtocol": "abu-project-management-preview-dev",
+  "packagedDomainDataNamespace": "com.abu.projectmanagement.preview",
+  "packagedUserDataNamespace": "com.abu.projectmanagement.preview.user-data",
+  "packagedE2EUserDataNamespace": "com.abu.projectmanagement.preview.e2e-user-data",
+  "developmentApplicationName": "abu-electron-dev",
+  "developmentDomainDataNamespace": "com.abu.app.electron-dev"
+}

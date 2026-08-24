@@ -1,6 +1,9 @@
 // src/core/enterprise/__tests__/discovery.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+const PREVIEW_PROTOCOL = 'abu-project-management-preview'
+const enrollUrl = (query: string) => `${PREVIEW_PROTOCOL}://enroll?${query}`
+
 vi.mock('@tauri-apps/plugin-fs', () => ({
   exists: vi.fn(),
   readTextFile: vi.fn(),
@@ -15,13 +18,13 @@ describe('enterprise discovery', () => {
   describe('parseEnrollDeepLink', () => {
     it('valid URL with server and token returns both fields', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      const result = parseEnrollDeepLink('abu://enroll?server=https://abu.acme.com&token=tok123')
+      const result = parseEnrollDeepLink(enrollUrl('server=https://abu.acme.com&token=tok123'))
       expect(result).toEqual({ serverUrl: 'https://abu.acme.com', enrollmentToken: 'tok123' })
     })
 
     it('valid URL with server only returns no enrollmentToken', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      const result = parseEnrollDeepLink('abu://enroll?server=https://abu.acme.com')
+      const result = parseEnrollDeepLink(enrollUrl('server=https://abu.acme.com'))
       expect(result).toEqual({ serverUrl: 'https://abu.acme.com' })
       expect(result?.enrollmentToken).toBeUndefined()
     })
@@ -36,19 +39,19 @@ describe('enterprise discovery', () => {
       expect(parseEnrollDeepLink('http://enroll?server=https://abu.acme.com')).toBeNull()
     })
 
-    it('wrong host (abu://bind) returns null', async () => {
+    it('wrong host returns null', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      expect(parseEnrollDeepLink('abu://bind?server=https://abu.acme.com')).toBeNull()
+      expect(parseEnrollDeepLink(`${PREVIEW_PROTOCOL}://bind?server=https://abu.acme.com`)).toBeNull()
     })
 
     it('missing server param returns null', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      expect(parseEnrollDeepLink('abu://enroll?token=tok123')).toBeNull()
+      expect(parseEnrollDeepLink(enrollUrl('token=tok123'))).toBeNull()
     })
 
     it('empty server param returns null', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      expect(parseEnrollDeepLink('abu://enroll?server=')).toBeNull()
+      expect(parseEnrollDeepLink(enrollUrl('server='))).toBeNull()
     })
 
     it('completely empty string returns null', async () => {
@@ -63,7 +66,7 @@ describe('enterprise discovery', () => {
 
     it('server URL with encoded special chars parses correctly', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
-      const encoded = 'abu://enroll?server=https%3A%2F%2Fabu.acme.com%2Fenterprise&token=abc'
+      const encoded = enrollUrl('server=https%3A%2F%2Fabu.acme.com%2Fenterprise&token=abc')
       const result = parseEnrollDeepLink(encoded)
       expect(result).toEqual({ serverUrl: 'https://abu.acme.com/enterprise', enrollmentToken: 'abc' })
     })
@@ -71,7 +74,7 @@ describe('enterprise discovery', () => {
     it('server value that is not a valid URL itself is stored as-is (raw string)', async () => {
       const { parseEnrollDeepLink } = await import('../discovery')
       // We store the raw string — URL validation is the server's responsibility
-      const result = parseEnrollDeepLink('abu://enroll?server=not-a-valid-url')
+      const result = parseEnrollDeepLink(enrollUrl('server=not-a-valid-url'))
       expect(result).toEqual({ serverUrl: 'not-a-valid-url' })
     })
   })
@@ -79,13 +82,13 @@ describe('enterprise discovery', () => {
   describe('resolveServerUrl', () => {
     it('with valid deepLinkUrl returns parsed result', async () => {
       const { resolveServerUrl } = await import('../discovery')
-      const result = await resolveServerUrl({ deepLinkUrl: 'abu://enroll?server=https://abu.acme.com' })
+      const result = await resolveServerUrl({ deepLinkUrl: enrollUrl('server=https://abu.acme.com') })
       expect(result).toEqual({ serverUrl: 'https://abu.acme.com' })
     })
 
     it('with valid deepLinkUrl that has token returns enrollmentToken', async () => {
       const { resolveServerUrl } = await import('../discovery')
-      const result = await resolveServerUrl({ deepLinkUrl: 'abu://enroll?server=https://abu.acme.com&token=tok999' })
+      const result = await resolveServerUrl({ deepLinkUrl: enrollUrl('server=https://abu.acme.com&token=tok999') })
       expect(result).toEqual({ serverUrl: 'https://abu.acme.com', enrollmentToken: 'tok999' })
     })
 

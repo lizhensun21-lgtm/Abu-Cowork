@@ -15,6 +15,8 @@ import { cn } from '@/lib/utils';
 type CheckResult = 'idle' | 'just-checked' | 'error';
 
 const DISCLAIMER_URL_BASE = 'https://github.com/PM-Shawn/Abu-Cowork/blob/main';
+const UPSTREAM_SOURCE_URL = 'https://github.com/PM-Shawn/Abu-Cowork';
+const LICENSE_URL = `${DISCLAIMER_URL_BASE}/LICENSE`;
 
 export default function AboutSection() {
   const [disclaimerOpen, setDisclaimerOpen] = useState(false);
@@ -89,7 +91,7 @@ export default function AboutSection() {
     <div className="min-h-full flex flex-col justify-center gap-6">
       {/* Logo & name */}
       <div className="flex flex-col items-center text-center space-y-3">
-        <img src={abuAvatar} alt="Abu" className="w-20 h-20 rounded-2xl" />
+        <img src={abuAvatar} alt={t.common.appName} className="w-20 h-20 rounded-2xl" />
         <div>
           <h4 className="text-h-xl font-semibold text-[var(--abu-text-primary)]">{t.common.appName}</h4>
           <p className="text-body text-[var(--abu-text-tertiary)]">{t.common.appSlogan}</p>
@@ -117,6 +119,10 @@ export default function AboutSection() {
             <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
               <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.basedOn}</span>
               <span className="text-body text-[var(--abu-text-secondary)]">Abu v{ABU_UPSTREAM_BASE_VERSION}</span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
+              <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.dataMode}</span>
+              <span className="text-body text-[var(--abu-text-secondary)]">{t.updates.dataModeLocalJson}</span>
             </div>
             <div className="flex justify-between items-center py-3 border-b border-[var(--abu-border)]">
               <span className="text-body text-[var(--abu-text-tertiary)]">{t.updates.updateChannel}</span>
@@ -300,16 +306,18 @@ export default function AboutSection() {
       {/* Footer */}
       <div className="text-center space-y-2 pt-2">
         <p className="text-body text-[var(--abu-text-tertiary)]">
-          Made with ❤️ by{' '}
-          <button
-            onClick={() => handleOpenLink('https://xhslink.cn/m/3A84p2yqNwZ')}
-            className="text-[var(--abu-clay)] hover:underline font-medium"
-          >
-            Shawn
-          </button>
+          {t.about.forkAttribution} Abu v{ABU_UPSTREAM_BASE_VERSION}
         </p>
         <p className="text-minor text-[var(--abu-text-muted)]">
-          © 2026 {t.common.appName}. All rights reserved.
+          {t.about.legalCopyright}
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-minor text-[var(--abu-text-muted)]">
+          <button
+            onClick={() => void handleOpenLink(LICENSE_URL)}
+            className="hover:text-[var(--abu-text-secondary)] transition-colors"
+          >
+            {t.about.licenseLinkLabel}
+          </button>
           <span className="mx-1.5">·</span>
           <button
             onClick={() => {
@@ -327,7 +335,14 @@ export default function AboutSection() {
           >
             {t.about.disclaimerLink}
           </button>
-        </p>
+          <span className="mx-1.5">·</span>
+          <button
+            onClick={() => void handleOpenLink(UPSTREAM_SOURCE_URL)}
+            className="hover:text-[var(--abu-text-secondary)] transition-colors"
+          >
+            {t.about.upstreamSource}
+          </button>
+        </div>
       </div>
 
       {/* Expandable disclaimer content — renders below footer */}

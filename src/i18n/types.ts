@@ -1395,8 +1395,6 @@ export interface TranslationDict {
     // Manifest modal
     manifestTitle: string;
     manifestClose: string;
-    // Feedback navigation prompt at bottom of DiagnosticSection
-    feedbackPageHint: string;
     // Conversation picker (multi-select attach, in the feedback form)
     conversationPickerTitle: string;
     conversationPickerTriggerPlaceholder: string;
@@ -2387,17 +2385,14 @@ export interface TranslationDict {
     distribution: string;
     projectManagementEdition: string;
     basedOn: string;
+    dataMode: string;
+    dataModeLocalJson: string;
     updateChannel: string;
     updateChannelDisabled: string;
   };
 
   // About
   about: {
-    feedback: string;
-    wechatSectionTitle: string;
-    feedbackDesc: string;
-    sponsor: string;
-    sponsorDesc: string;
     deviceId: string;
     deviceIdHint: string;
     copied: string;
@@ -2405,6 +2400,9 @@ export interface TranslationDict {
     /** Suffix appended after the disclaimer link label, e.g. " (Full)". */
     disclaimerFullSuffix: string;
     licenseLinkLabel: string;
+    upstreamSource: string;
+    forkAttribution: string;
+    legalCopyright: string;
     disclaimerTitle: string;
     disclaimerClose: string;
   };

@@ -1,5 +1,5 @@
 // src/core/enterprise/useDeepLinkEnroll.ts
-// React hook: listens for abu://enroll deep links and exposes a pending enroll
+// React hook: listens for fork-specific enrollment deep links and exposes a pending enroll
 // state that the host (App.tsx) can use to drive the BindToEnterpriseFlow UI.
 //
 // Two sources are checked:

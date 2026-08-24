@@ -1,9 +1,9 @@
 {
-  "name": "abu",
+  "name": "abu-project-management-preview",
   "private": false,
   "license": "Apache-2.0",
-  "version": "0.34.2",
-  "description": "Abu - AI Desktop Office Assistant",
+  "version": "0.1.0-rc.1",
+  "description": "Abu Project Management - RC1 Preview",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -63,6 +63,7 @@
     "test:electron:release-workflow": "node --test scripts/electron-release-workflow.test.mjs scripts/validate-diagnostic-upload-target.test.mjs scripts/validate-electron-feed-version.test.mjs",
     "smoke:electron:packaged": "node scripts/electron-packaged-smoke.mjs",
     "electron:host-ui-test": "node --test electron/windowChrome.test.cjs electron/chromeExtensionsLauncher.test.cjs electron/legacyWindowsInstall.test.cjs",
+    "test:preview-branding": "node --test electron/productIdentity.test.cjs electron/updaterHost.test.cjs scripts/preview-branding.test.mjs",
     "electron:security-test": "node --test electron/securityBoundary.test.cjs electron/fsHost.security.test.cjs electron/computerUseActionPolicy.test.cjs electron/computerUseGate.test.cjs electron/computerUsePermissionHost.test.cjs electron/computerUsePermissionGuideState.test.cjs electron/guiHost.active-window.test.cjs",
     "electron:command-test": "npm run setup:electron-runtimes && npm run verify:electron-runtimes && npm run build:electron-browser-runtime && npm run build:sandbox-launcher && node --test electron/runtimeResolver.test.cjs electron/commandHost.sandbox-launcher.test.cjs electron/mcpBridge.sandbox-launcher.test.cjs electron/browserAutomationHost.test.cjs electron/chromeBridgeHost.test.cjs",
     "electron:browser-test": "npm run setup:electron-runtimes && npm run verify:electron-runtimes && npm run build:electron-browser-runtime && npm run build:sandbox-launcher && electron electron/spike/browserRuntimeVerify.cjs",

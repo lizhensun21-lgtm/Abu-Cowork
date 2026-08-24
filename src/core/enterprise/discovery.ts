@@ -1,6 +1,7 @@
 // src/core/enterprise/discovery.ts
 // Server URL discovery: deep-link parsing + existing binding fallback.
 import { loadBinding } from './boot'
+import { PRODUCT_PROTOCOL } from '@/config/productIdentity'
 
 export interface EnrollDeepLink {
   serverUrl: string
@@ -8,13 +9,13 @@ export interface EnrollDeepLink {
 }
 
 /**
- * Parse an abu://enroll deep link URL.
+ * Parse an Abu Project Management Preview enrollment deep link URL.
  * Returns null if the URL is invalid (wrong scheme, missing server param, etc.)
  */
 export function parseEnrollDeepLink(url: string): EnrollDeepLink | null {
   try {
     const parsed = new URL(url)
-    if (parsed.protocol !== 'abu:') return null
+    if (parsed.protocol !== `${PRODUCT_PROTOCOL}:`) return null
     if (parsed.hostname !== 'enroll') return null
     const server = parsed.searchParams.get('server')
     if (!server) return null
