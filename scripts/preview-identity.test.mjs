@@ -14,12 +14,17 @@ const manifest = JSON.parse(read('package.json'));
 test('package and builder metadata implement the centralized Preview identity', () => {
   assert.equal(manifest.name, 'abu-project-management-preview');
   assert.equal(manifest.version, identity.productVersion);
+  assert.equal(manifest.description, identity.displayName);
   assert.equal(builder.appId, identity.appId);
   assert.equal(builder.productName, identity.displayName);
   assert.equal(builder.extraMetadata.abuRelease.distribution, identity.distribution);
   assert.equal(builder.extraMetadata.abuRelease.upstreamBaseVersion, identity.upstreamBaseVersion);
   assert.equal(builder.extraMetadata.abuRelease.officialBuild, identity.officialBuild);
   assert.equal(builder.win.executableName, identity.executableName);
+  assert.equal(
+    manifest.scripts['verify:preview:windows-package'],
+    'node scripts/verify-preview-windows-package.mjs',
+  );
   assert.deepEqual(builder.protocols.flatMap((entry) => entry.schemes), [identity.protocol]);
 });
 

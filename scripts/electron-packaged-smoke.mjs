@@ -44,6 +44,7 @@ import {
   enterUpstreamChatFromProjectManagementPortal,
   isValidNativeHelperIdentity,
   PACKAGED_CHAT_PLACEHOLDER,
+  roundTripProjectManagementPortalFromUpstreamChat,
 } from './electron-packaged-smoke-contract.mjs';
 
 const require = createRequire(import.meta.url);
@@ -884,10 +885,7 @@ async function configureLocalMockProvider(window, baseUrl) {
     testModelId: TEST_MODEL_ID,
   });
   await window.reload();
-  await window.getByPlaceholder(CHAT_PLACEHOLDER).waitFor({
-    state: 'visible',
-    timeout: READY_TIMEOUT,
-  });
+  await enterUpstreamChatFromProjectManagementPortal(window, READY_TIMEOUT);
 }
 
 async function enableMockProviderTools(window) {
@@ -910,10 +908,7 @@ async function enableMockProviderTools(window) {
     window.localStorage.setItem('abu-settings', JSON.stringify({ ...persisted, state }));
   });
   await window.reload();
-  await window.getByPlaceholder(CHAT_PLACEHOLDER).waitFor({
-    state: 'visible',
-    timeout: READY_TIMEOUT,
-  });
+  await enterUpstreamChatFromProjectManagementPortal(window, READY_TIMEOUT);
 }
 
 async function waitUntil(predicate, description, timeoutMs = READY_TIMEOUT) {
@@ -2116,19 +2111,10 @@ async function main() {
       (windowChrome?.menuVisible === false && windowChrome?.menuBarAutoHide === true);
 
     // A fully isolated profile legitimately opens the first-run guide after
-    // persisted settings hydrate. Exercise that user-visible step before
-    // checking the PM-first shell or title-bar controls; otherwise its modal
-    // backdrop correctly intercepts every click and produces a false Windows
-    // interaction failure.
+    // persisted settings hydrate. In the PM-first fork it mounts only after
+    // crossing into Abu, so dismiss it below before exercising title-bar
+    // controls; otherwise its modal backdrop correctly intercepts each click.
     const firstRunGuide = window.locator('[data-abu-guide-modal="true"]');
-    await firstRunGuide.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
-    if (await firstRunGuide.isVisible()) {
-      await firstRunGuide
-        .getByRole('button', { name: /^(我知道了|Got it)$/ })
-        .click();
-      await firstRunGuide.waitFor({ state: 'hidden', timeout: READY_TIMEOUT });
-    }
-    checks.packagedFirstRunGuideHandled = !(await firstRunGuide.isVisible());
 
     // The project-management fork deliberately starts in its Portal. Prove
     // that root, Overview, and the Portal-owned sidebar are present before
@@ -2137,6 +2123,18 @@ async function main() {
     Object.assign(
       checks,
       await enterUpstreamChatFromProjectManagementPortal(window, READY_TIMEOUT),
+    );
+    await firstRunGuide.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
+    if (await firstRunGuide.isVisible()) {
+      await firstRunGuide
+        .getByRole('button', { name: /^(我知道了|Got it)$/ })
+        .click();
+      await firstRunGuide.waitFor({ state: 'hidden', timeout: READY_TIMEOUT });
+    }
+    checks.packagedFirstRunGuideHandled = !(await firstRunGuide.isVisible());
+    Object.assign(
+      checks,
+      await roundTripProjectManagementPortalFromUpstreamChat(window, READY_TIMEOUT),
     );
 
     // Exercise the same BrowserWindow close event produced by the native ×.
@@ -2310,23 +2308,35 @@ async function main() {
         const screenStartY = Math.round(dragPlan.contentY + startY);
         const dragHelperName = process.platform === 'win32' ? 'native-helper.exe' : 'native-helper';
         const dragHelperPath = path.join(found.resources, 'native-helper', dragHelperName);
-        const helperResult = spawnSync(dragHelperPath, [], {
-          input: `${JSON.stringify({
-            id: 1,
-            method: 'mouse_drag',
-            params: {
-              start_x: screenStartX,
-              start_y: screenStartY,
-              end_x: screenStartX + dragPlan.deltaX,
-              end_y: screenStartY + dragPlan.deltaY,
-              expected_bundle_id: 'abu.packaged-smoke',
-              expected_process_id: dragPlan.processId,
-            },
-          })}\n`,
-          encoding: 'utf8',
-          timeout: 10_000,
-        });
-        const helperResponse = JSON.parse(String(helperResult.stdout || '').trim());
+        let helperResult;
+        let helperResponse;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await app.evaluate(({ BrowserWindow }) => {
+            const mainWindow = BrowserWindow.getAllWindows()
+              .find((candidate) => candidate.webContents.getURL().includes('/dist-electron-spike/index.html'));
+            mainWindow?.focus();
+            mainWindow?.moveTop();
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          helperResult = spawnSync(dragHelperPath, [], {
+            input: `${JSON.stringify({
+              id: 1,
+              method: 'mouse_drag',
+              params: {
+                start_x: screenStartX,
+                start_y: screenStartY,
+                end_x: screenStartX + dragPlan.deltaX,
+                end_y: screenStartY + dragPlan.deltaY,
+                expected_bundle_id: 'abu.packaged-smoke',
+                expected_process_id: dragPlan.processId,
+              },
+            })}\n`,
+            encoding: 'utf8',
+            timeout: 10_000,
+          });
+          helperResponse = JSON.parse(String(helperResult.stdout || '').trim());
+          if (helperResult.status === 0 && !helperResponse?.error) break;
+        }
         if (helperResult.status !== 0 || helperResponse?.error) {
           throw new Error([
             `native drag helper status=${String(helperResult.status)}`,
@@ -2799,13 +2809,17 @@ async function main() {
         abortAccepted === true && abortedResult.code !== 0;
 
       const timeoutScript = taggedTreeProbeScript(timeoutTree.resultPath);
+      // Win32 process-tree verification uses CIM and can take several seconds
+      // on loaded hosts. Keep the command alive long enough to observe both
+      // tagged PIDs before proving that the product timeout kills them.
+      const timeoutSeconds = process.platform === 'win32' ? 15 : 3;
       const timedCommand = window.evaluate(
-        ({ script, marker: processMarker, writableRoot, id }) =>
+        ({ script, marker: processMarker, writableRoot, id, timeout }) =>
           window.__TAURI_INTERNALS__.invoke('run_argv_command', {
             program: 'node',
             args: ['-e', script, processMarker],
             cwd: writableRoot,
-            timeout: 3,
+            timeout,
             sandboxEnabled: true,
             extraWritablePaths: [writableRoot],
             networkIsolation: false,
@@ -2816,6 +2830,7 @@ async function main() {
           marker: timeoutTree.marker,
           writableRoot: pidRoot,
           id: `packaged-timeout-${randomUUID()}`,
+          timeout: timeoutSeconds,
         },
       );
       await waitUntil(
@@ -3130,10 +3145,7 @@ print(json.dumps({"executable": sys.executable, "files": [str(p) for p in [docx_
       );
       appProcess = app.process();
       window = await app.firstWindow({ timeout: READY_TIMEOUT });
-      await window.getByPlaceholder(CHAT_PLACEHOLDER).waitFor({
-        state: 'visible',
-        timeout: READY_TIMEOUT,
-      });
+      await enterUpstreamChatFromProjectManagementPortal(window, READY_TIMEOUT);
       const showSidebar = window.getByTitle(/显示侧栏|Show sidebar/);
       if (await showSidebar.count()) {
         await showSidebar.click();

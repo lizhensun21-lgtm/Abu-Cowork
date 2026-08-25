@@ -10,6 +10,7 @@ const MACOS_NATIVE_HELPER_COMMANDS = Object.freeze([
 ]);
 
 export const PACKAGED_CHAT_PLACEHOLDER = /想让阿布帮你做点什么？|What can Abu help you with\?/;
+export const PACKAGED_BACK_TO_ABU_NAME = /^(返回 Abu|Back to Abu)$/;
 
 /**
  * Assert the fork's PM-first packaged startup, then cross the supported Portal
@@ -25,7 +26,7 @@ export async function enterUpstreamChatFromProjectManagementPortal(page, timeout
   await portal.waitFor({ state: 'visible', timeout });
   await overview.waitFor({ state: 'visible', timeout });
   await sidebar.waitFor({ state: 'visible', timeout });
-  await page.getByRole('button', { name: /^(返回阿布|Back to Abu)$/ }).click();
+  await page.getByRole('button', { name: PACKAGED_BACK_TO_ABU_NAME }).click();
   await page.getByPlaceholder(PACKAGED_CHAT_PLACEHOLDER).waitFor({
     state: 'visible',
     timeout,
@@ -36,6 +37,40 @@ export async function enterUpstreamChatFromProjectManagementPortal(page, timeout
     packagedProjectOverviewVisible: true,
     packagedProjectManagementSidebarVisible: true,
     packagedReturnedToAbuChat: true,
+  };
+}
+
+/**
+ * Prove the upstream shell's WindowTitleBar entry can reopen the PM Portal,
+ * then return to Chat so the remaining upstream packaged checks keep running
+ * from the shell they exercise.
+ */
+export async function roundTripProjectManagementPortalFromUpstreamChat(page, timeout) {
+  const portalEntry = page.locator('[data-window-control="project-management"]');
+  await portalEntry.waitFor({ state: 'visible', timeout });
+  await portalEntry.click();
+
+  await page.locator('[data-project-management-portal]').waitFor({
+    state: 'visible',
+    timeout,
+  });
+  await page.locator('[data-project-management-workspace]').waitFor({
+    state: 'visible',
+    timeout,
+  });
+  await page.locator('[data-project-management-portal-sidebar]').waitFor({
+    state: 'visible',
+    timeout,
+  });
+  await page.getByRole('button', { name: PACKAGED_BACK_TO_ABU_NAME }).click();
+  await page.getByPlaceholder(PACKAGED_CHAT_PLACEHOLDER).waitFor({
+    state: 'visible',
+    timeout,
+  });
+
+  return {
+    packagedWindowTitlebarReturnedToProjectManagementPortal: true,
+    packagedReturnedFromTitlebarPortalToAbuChat: true,
   };
 }
 
