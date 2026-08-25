@@ -74,6 +74,7 @@ import { startTraySync, stopTraySync } from '@/core/im/traySync';
 import { startInboundDispatcher, stopInboundDispatcher } from '@/core/im/inboundDispatcher';
 import { startFeishuWsManager, stopFeishuWsManager } from '@/core/im/feishuWsManager';
 import { startWeChatManager, stopWeChatManager } from '@/core/im/wechatConnectionManager';
+import { PRODUCT_DISPLAY_NAME } from '@/config/productIdentity';
 import { loadIMPlugins } from '@/core/im/pluginLoader';
 import { stopAllHeartbeats } from '@/core/im/pluginHeartbeat';
 import { reconcileIMSessions } from '@/core/im/sessionReconcile';
@@ -751,7 +752,7 @@ function App() {
   useEffect(() => {
     if (desktopPlatform === 'unknown') return;
     if (!isTauriEnv()) return; // web / E2E: no Tauri window API
-    getCurrentWindow().setTitle(desktopPlatform === 'macos' ? '' : 'Abu');
+    getCurrentWindow().setTitle(desktopPlatform === 'macos' ? '' : PRODUCT_DISPLAY_NAME);
   }, [desktopPlatform]);
 
   // macOS keeps its compact controls in a fixed overlay. Electron Windows uses
@@ -798,7 +799,7 @@ function App() {
       anchor: { x: number; y: number },
     ) => invoke('window_titlebar_menu', { group, ...anchor }),
     labels: {
-      appName: 'Abu',
+      appName: PRODUCT_DISPLAY_NAME,
       editMenu: t.sidebar.editMenu,
       windowMenu: t.sidebar.windowMenu,
       helpMenu: t.sidebar.helpMenu,
@@ -935,7 +936,7 @@ function App() {
         )}
 
         {/* Deep-link enrollment: show BindToEnterpriseFlow pre-seeded with serverUrl
-            when the app is opened via abu://enroll?server=<URL>&token=<token>.
+            when the app is opened via the fork-specific enrollment protocol.
             Renders above all other overlays (z-50 inside BindToEnterpriseFlow). */}
         {pendingEnroll && (
           <BindToEnterpriseFlow

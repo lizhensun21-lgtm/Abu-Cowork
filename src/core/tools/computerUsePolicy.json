@@ -2,6 +2,7 @@
   "macos": {
     "hardDeny": [
       "com.abu.app",
+      "com.abu.projectmanagement.preview",
       "com.apple.SecurityAgent",
       "com.apple.authorizationhost",
       "com.apple.keychainaccess",
@@ -59,6 +60,8 @@
     "hardDeny": [
       "abu",
       "abu.exe",
+      "abu project management",
+      "abu project management.exe",
       "cmd",
       "cmd.exe",
       "powershell",

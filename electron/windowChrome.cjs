@@ -72,6 +72,7 @@ function mainWindowPlatformOptions(platform = process.platform, dark = false) {
 function buildWindowsMenuTemplate({
   isZh = false,
   version = '',
+  productName = 'Abu',
   onAbout = () => {},
   onToggleMaximize = () => {},
 } = {}) {
@@ -108,7 +109,7 @@ function buildWindowsMenuTemplate({
       label: label('帮助(&H)', '&Help'),
       submenu: [
         {
-          label: label(`关于 Abu（v${version}）`, `About Abu (v${version})`),
+          label: label(`关于 ${productName}（v${version}）`, `About ${productName} (v${version})`),
           click: onAbout,
         },
       ],
@@ -119,7 +120,7 @@ function buildWindowsMenuTemplate({
 function configureApplicationMenu(
   win,
   Menu,
-  { platform = process.platform, isZh = false, version = '', onAbout } = {},
+  { platform = process.platform, isZh = false, version = '', productName = 'Abu', onAbout } = {},
 ) {
   if (platform === 'darwin') return false;
   if (platform === 'win32') {
@@ -129,7 +130,7 @@ function configureApplicationMenu(
       else win.maximize?.();
     };
     const menu = Menu.buildFromTemplate(
-      buildWindowsMenuTemplate({ isZh, version, onAbout, onToggleMaximize }),
+      buildWindowsMenuTemplate({ isZh, version, productName, onAbout, onToggleMaximize }),
     );
     // Store the native submenus for the renderer title-bar buttons, while
     // removing the OS menu BAR that otherwise consumes a second full row.

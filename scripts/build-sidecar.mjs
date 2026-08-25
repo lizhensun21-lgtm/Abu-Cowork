@@ -72,10 +72,11 @@ if (!existsSync(enterpriseModulesDir)) {
  * reference would be the same class of startup crash.
  */
 const packageJson = JSON.parse(readFileSync(path.resolve(root, 'package.json'), 'utf-8'));
-const buildVersion = process.env.ABU_BUILD_VERSION?.trim() || packageJson.version;
+const productIdentity = JSON.parse(readFileSync(path.resolve(root, 'product-identity.json'), 'utf-8'));
+const buildVersion = process.env.ABU_BUILD_VERSION?.trim() || productIdentity.productVersion;
 const distributions = new Set(['upstream-official', 'abu-project-management', 'source']);
-const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-management';
-const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.41.0';
+const distribution = process.env.ABU_DISTRIBUTION?.trim() || productIdentity.distribution;
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || productIdentity.upstreamBaseVersion;
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(buildVersion)) {
   throw new Error(`[build-sidecar] Invalid ABU_BUILD_VERSION: ${buildVersion}`);
 }
@@ -84,6 +85,9 @@ if (!distributions.has(distribution)) {
 }
 if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
   throw new Error(`[build-sidecar] Invalid ABU_UPSTREAM_BASE_VERSION: ${upstreamBaseVersion}`);
+}
+if (packageJson.version !== productIdentity.productVersion) {
+  throw new Error(`[build-sidecar] package.json version must match product identity: ${productIdentity.productVersion}`);
 }
 
 /**

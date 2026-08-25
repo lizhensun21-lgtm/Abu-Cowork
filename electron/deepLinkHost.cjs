@@ -1,7 +1,8 @@
 /**
  * Deep-link host — the Electron equivalent of tauri_plugin_deep_link.
  *
- * Abu's only deep link today is `abu://enroll?server=<url>&token=<token>`,
+ * The Preview's only deep link today is
+ * `abu-project-management-preview://enroll?server=<url>&token=<token>`,
  * used to pre-fill the enterprise-binding form (an admin sends the user a link;
  * clicking it launches/focuses Abu with the server address filled in). The
  * frontend consumes it unchanged via `@tauri-apps/plugin-deep-link`:
@@ -23,19 +24,17 @@
  *      renderer's `deep-link://new-url` subscriber appears) rather than
  *      blind-sending into a renderer that may not have mounted yet.
  *
- * Dev vs prod scheme: an installed production Abu (currently the Tauri build)
- * also owns `abu://`, so on a dev machine `open abu://…` could route to it
- * instead of this shell. To make dev verification deterministic we register a
- * separate `abu-dev://` scheme when unpackaged and rewrite it back to the
- * canonical `abu://` before the shared frontend parser (which only accepts
- * `abu:`) ever sees it. Packaged builds register the real `abu://`.
+ * Dev and packaged schemes are both fork-specific, so neither can claim the
+ * upstream `abu://` registration. Dev URLs are normalized to the packaged
+ * Preview scheme before they reach the renderer.
  */
 'use strict';
 
 const path = require('node:path');
+const PRODUCT_IDENTITY = require('./productIdentity.cjs');
 
-const PROD_SCHEME = 'abu';
-const DEV_SCHEME = 'abu-dev';
+const PROD_SCHEME = PRODUCT_IDENTITY.protocol;
+const DEV_SCHEME = PRODUCT_IDENTITY.devProtocol;
 const NEW_URL_EVENT = 'deep-link://new-url';
 
 // The single known deep-link action today. New actions must be added here so
@@ -53,7 +52,7 @@ function log(msg, extra) {
 }
 
 /**
- * Normalize a raw URL string to the canonical `abu://…` form, or return null
+ * Normalize a raw URL string to the canonical Preview form, or return null
  * if it is not one of our schemes / not a known action. This is the ONE parser
  * all three arrival sources funnel through (competitor convention #2/#3).
  * @param {unknown} raw
@@ -62,18 +61,18 @@ function log(msg, extra) {
 function normalizeDeepLinkUrl(raw) {
   if (typeof raw !== 'string') return null;
   let s = raw.trim();
-  // Windows may hand us "abu://…" or (rarely) "abu:…"; accept both forms.
+  // Windows may hand us "scheme://…" or (rarely) "scheme:…"; accept both forms.
   const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(s);
   if (!m) return null;
   const scheme = m[1].toLowerCase();
   if (scheme !== PROD_SCHEME && scheme !== DEV_SCHEME) return null;
   if (scheme === DEV_SCHEME) {
-    // abu-dev://…  →  abu://…  (rewrite the dev scheme to the canonical one)
+    // Rewrite the dev scheme to the packaged Preview scheme.
     s = PROD_SCHEME + s.slice(m[1].length);
   }
   try {
     const u = new URL(s);
-    if (u.protocol !== 'abu:') return null;
+    if (u.protocol !== `${PROD_SCHEME}:`) return null;
     if (!KNOWN_HOSTS.has(u.hostname)) return null; // reject unknown actions
     return s;
   } catch {
@@ -132,7 +131,7 @@ function initDeepLink(app, deps) {
     event.preventDefault();
     const n = normalizeDeepLinkUrl(url);
     if (!n) {
-      log('ignored non-abu open-url', { url });
+      log('ignored non-product open-url', { url });
       return;
     }
     if (app.isReady()) {
@@ -154,7 +153,7 @@ function initDeepLink(app, deps) {
 /**
  * A running-app deep link arrived. Surface the window and queue+flush it to the
  * renderer.
- * @param {string} url canonical abu://… (already normalized)
+ * @param {string} url canonical Preview URL (already normalized)
  */
 function deliverHotUrl(url) {
   pendingHotUrls.push(url);
@@ -230,5 +229,7 @@ module.exports = {
   normalizeDeepLinkUrl,
   extractDeepLinkFromArgv,
   NEW_URL_EVENT,
+  PROD_SCHEME,
+  DEV_SCHEME,
   __resetForTest,
 };

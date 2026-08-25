@@ -27,6 +27,7 @@
 const { app, BrowserWindow, dialog, Menu, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const PRODUCT_IDENTITY = require('./productIdentity.cjs');
 const {
   registerTauriHost,
   wireWindowEvents,
@@ -86,7 +87,9 @@ const E2E_AUTO_CONFIRM_TRANSITION_ENV = 'ABU_E2E_AUTO_CONFIRM_TRANSITION';
 const allowE2EAppDataRedirect =
   !app.isPackaged || process.env[PACKAGED_E2E_ENV] === '1';
 let e2eTauriStorageRoot = null;
-if (allowE2EAppDataRedirect && Object.hasOwn(process.env, E2E_APP_DATA_ROOT_ENV)) {
+const hasE2EAppDataRedirect =
+  allowE2EAppDataRedirect && Object.hasOwn(process.env, E2E_APP_DATA_ROOT_ENV);
+if (hasE2EAppDataRedirect) {
   const appDataRoot = process.env[E2E_APP_DATA_ROOT_ENV];
   if (typeof appDataRoot !== 'string' || !path.isAbsolute(appDataRoot)) {
     throw new Error(`${E2E_APP_DATA_ROOT_ENV} must be an absolute path when set`);
@@ -95,7 +98,7 @@ if (allowE2EAppDataRedirect && Object.hasOwn(process.env, E2E_APP_DATA_ROOT_ENV)
   // Electron's Chromium profile is separate from Abu's sidecar app-data tree.
   // Redirect both so installed/packaged migration tests cannot read or back up
   // a developer's real Local Storage, cookies, or other persistent state.
-  app.setPath('userData', path.join(appDataRoot, 'Abu-e2e-user-data'));
+  app.setPath('userData', path.join(appDataRoot, PRODUCT_IDENTITY.e2eUserDataNamespace));
   // Offline diagnostic export is part of the real-Electron E2E journey.
   // Keep its Downloads write inside the launch-specific temp root so the
   // test never leaves artifacts in a developer's real ~/Downloads folder.
@@ -105,7 +108,13 @@ if (allowE2EAppDataRedirect && Object.hasOwn(process.env, E2E_APP_DATA_ROOT_ENV)
 
 // Keep local Electron development isolated while giving packaged builds the
 // exact product identity used by Safe Storage and the user-data directory.
-app.setName(app.isPackaged ? 'Abu' : 'abu-electron-dev');
+app.setName(PRODUCT_IDENTITY.displayName);
+if (!hasE2EAppDataRedirect) {
+  app.setPath(
+    'userData',
+    path.join(app.getPath('appData'), PRODUCT_IDENTITY.userDataNamespace)
+  );
+}
 
 function log(level, msg, extra) {
   const line = `[electron:${level}] ${msg}${extra ? ' ' + JSON.stringify(extra) : ''}`;
@@ -177,6 +186,7 @@ function showTransitionSuccess(appInstance, win) {
 
 function createWindow(transitionWindow = null) {
   const win = new BrowserWindow({
+    title: PRODUCT_IDENTITY.displayName,
     show: false,
     width: 1200,
     height: 800,
@@ -196,12 +206,21 @@ function createWindow(transitionWindow = null) {
     platform: process.platform,
     isZh: app.getLocale().toLowerCase().startsWith('zh'),
     version: app.getVersion(),
+    productName: PRODUCT_IDENTITY.displayName,
     onAbout: () => {
       void dialog.showMessageBox(win, {
         type: 'info',
-        title: 'Abu',
-        message: 'Abu',
-        detail: `v${app.getVersion()}`,
+        title: PRODUCT_IDENTITY.displayName,
+        message: PRODUCT_IDENTITY.displayName,
+        detail: [
+          PRODUCT_IDENTITY.channelLabel,
+          PRODUCT_IDENTITY.editionLabel,
+          `Version: ${app.getVersion()}`,
+          `Based on Abu: ${PRODUCT_IDENTITY.upstreamBaseVersion}`,
+          `Data mode: ${PRODUCT_IDENTITY.dataModeLabel}`,
+          `Distribution: ${PRODUCT_IDENTITY.distribution}`,
+          'Updater: Disabled',
+        ].join('\n'),
         buttons: ['OK'],
         noLink: true,
       });
@@ -399,7 +418,7 @@ async function createTransitionWindow(appInstance, inspection) {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  // Deep-link wiring (abu://enroll → enterprise-bind pre-fill). MUST be set up
+  // Preview deep-link wiring (fork protocol → enterprise-bind pre-fill). MUST be set up
   // before app 'ready' so the early open-url listener is in place when the OS
   // delivers a launching URL, and the cold-start argv is parsed. See
   // electron/deepLinkHost.cjs for the competitor-grounded design.

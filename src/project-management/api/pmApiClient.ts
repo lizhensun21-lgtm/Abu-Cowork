@@ -13,7 +13,8 @@ export interface PmApiRequestOptions {
 }
 
 export interface PmApiClientOptions {
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | null;
+  readonly isDevelopment?: boolean;
   readonly fetch?: typeof fetch;
   readonly createTraceId?: () => string;
   readonly defaultTimeoutMs?: number;
@@ -47,9 +48,12 @@ export class PmApiClient {
   private readonly defaultTimeoutMs: number;
 
   constructor(options: PmApiClientOptions = {}) {
-    this.baseUrl = resolvePmApiBaseUrl(
-      options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
-    );
+    this.baseUrl = resolvePmApiBaseUrl({
+      ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+      ...(options.isDevelopment === undefined
+        ? {}
+        : { isDevelopment: options.isDevelopment }),
+    });
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.createTraceId = options.createTraceId ?? (() => crypto.randomUUID());
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? PM_API_DEFAULT_TIMEOUT_MS;

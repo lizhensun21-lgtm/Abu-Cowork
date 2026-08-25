@@ -4,14 +4,15 @@
 
 **English** | [中文](README.zh-CN.md)
 
-# Abu
+# Abu Project Management
 
-**Your AI Desktop Office Assistant — Just Leave It to Abu**
+**Project Management Edition · RC1 Preview**
 
-A locally-run AI desktop assistant inspired by Claude Code's Cowork mode.
-Tell Abu what you need — it reads files, runs commands, writes docs, and builds reports, all on your machine.
+Abu Project Management is an independent project-management fork/edition based
+on [upstream Abu v0.41.0](https://github.com/PM-Shawn/Abu-Cowork). It preserves
+Abu's local desktop assistant while adding a local-JSON Project Management
+Portal. This Preview is not an upstream official release.
 
-[![Release](https://img.shields.io/github/v/release/PM-Shawn/Abu-Cowork?style=flat-square)](https://github.com/PM-Shawn/Abu-Cowork/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 [Download](#download) · [Quick Start](#quick-start) · [Features](#features) · [User Guide](docs/User-Guide.md) · [Build from Source](#build-from-source)
@@ -41,11 +42,11 @@ Tell Abu what you need — it reads files, runs commands, writes docs, and build
 
 ## What's New
 
-**[Download the latest stable release](https://github.com/PM-Shawn/Abu-Cowork/releases/latest)** · [Read the full changelog](CHANGELOG.md)
+Preview product version: **0.1.0-rc.1** · Upstream base: **0.41.0** · [Read the changelog](CHANGELOG.md)
 
 Recent highlights: **Workspace file tree + code canvas** (browse / preview / edit files in the side panel, CodeMirror source editing with auto-save, preview auto-refresh, version snapshots with rollback), **declarative progress panel** (the model declares its own plan steps and status via `report_plan`), **inline visualization widgets** (charts / HTML / Mermaid rendered inline in chat), **multi-endpoint provider presets** (Volcengine / Bailian / Zhipu access plans as curated presets + a unified add/edit modal), **per-model capabilities** (vision / tools / reasoning / token limits declared per model), plus **doc comment-to-chat**, **full internationalization**, and **signed + notarized macOS builds**.
 
-> Full changelog per release: see [Releases](https://github.com/PM-Shawn/Abu-Cowork/releases).
+> Upstream release history remains available from the [Abu source repository](https://github.com/PM-Shawn/Abu-Cowork); those packages are not this Preview.
 
 ## Preview
 
@@ -204,15 +205,16 @@ Turn Abu into your team bot — just @Abu in your chat:
 
 ## Download
 
-Head to [GitHub Releases](https://github.com/PM-Shawn/Abu-Cowork/releases) to download the latest version:
+Preview artifacts are produced by this fork. Upstream Abu installers are not
+Abu Project Management Preview installers.
 
 | Platform | File |
 |----------|------|
-| macOS (Apple Silicon) | `Abu-x.x.x-mac-arm64.dmg` |
-| macOS (Intel) | `Abu-x.x.x-mac-x64.dmg` |
-| Windows x64 | `Abu-x.x.x-windows-x64-setup.exe` |
+| Windows x64 | `Abu-Project-Management-RC1-Preview-windows-x64-setup.exe` |
 
-> Official macOS packages are signed and notarized. The Windows installer is current-user only and does not need administrator rights, but remains Authenticode-unsigned; SmartScreen may require **More info → Run anyway**. See the [Installation Guide](docs/Installation-Guide.md).
+> The Preview Windows installer is current-user only and does not request
+> administrator rights. RC1 Preview remains Authenticode-unsigned; SmartScreen
+> may require **More info → Run anyway**. See the [Installation Guide](docs/Installation-Guide.md).
 
 ## Quick Start
 
@@ -321,8 +323,8 @@ scope for this baseline.
 
 ```bash
 # Clone the repo
-git clone https://github.com/PM-Shawn/Abu-Cowork.git
-cd Abu-Cowork
+git clone <fork-repository-url> Abu-Project-Management
+cd Abu-Project-Management
 
 # Prepare worktree-local dependencies, Electron/browser runtimes, sidecar,
 # native helper, sandbox launcher, and the OSS renderer
@@ -437,4 +439,7 @@ Issues and Pull Requests are welcome. Read the [Fork & Distribution Guide](FORKI
 
 ## License
 
-**[Apache License 2.0](LICENSE)** — Free to use, modify, and distribute, including commercial use. Copyright notices must be retained. **Enterprise edition requires a license**, offering team collaboration, SSO, audit logs, and private deployment support. [Contact us](mailto:pmshawn@163.com).
+**[Apache License 2.0](LICENSE)** — Free to use, modify, and distribute,
+including commercial use, subject to its terms and retained notices. This fork
+preserves Abu upstream attribution and the `Copyright 2026 Shawn` notice. See
+[Third-Party Notices](legal/THIRD_PARTY_NOTICES.md) for the packaging notice index.

@@ -50,7 +50,7 @@ class MemoryFileSystem implements ProjectManagementFileSystem {
   maxActiveWrites = 0;
   private backupSequence = 0;
 
-  async appDataDir() { return '/app-data/com.abu.app.electron-dev'; }
+  async appDataDir() { return '/app-data/com.abu.projectmanagement.preview.user-data'; }
   async join(...paths: string[]) { return paths.join('/').replace(/\/+/g, '/'); }
   async exists(path: string) { return this.files.has(path); }
   async readTextFile(path: string) {
@@ -86,7 +86,7 @@ class MemoryFileSystem implements ProjectManagementFileSystem {
   }
 }
 
-const dataPath = '/app-data/com.abu.app.electron-dev/project-management/project-management.json';
+const dataPath = '/app-data/com.abu.projectmanagement.preview.user-data/project-management/project-management.json';
 
 describe('Project Management persistence format', () => {
   it('roundtrips the complete V1 graph envelope without losing metadata', () => {

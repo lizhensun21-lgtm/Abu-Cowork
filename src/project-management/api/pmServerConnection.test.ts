@@ -6,8 +6,12 @@ import { createEmptyProjectGraph } from '../domain/projectGraph';
 import { InMemoryProjectManagementRepository } from '../repository/InMemoryProjectManagementRepository';
 import { createProjectManagementStore } from '../state/projectManagementStore';
 import type { PmHealthApi, PmHealthResponse } from './pmHealthApi';
+import { PmApiConfigError } from './pmApiConfig';
 import { PmApiError } from './pmApiError';
-import { createPmServerConnection } from './pmServerConnection';
+import {
+  createPmConnectionForDataMode,
+  createPmServerConnection,
+} from './pmServerConnection';
 
 const NOW = new Date('2026-08-21T08:00:00.000Z');
 
@@ -16,6 +20,55 @@ function healthApi(implementation: PmHealthApi['getHealth']): PmHealthApi {
 }
 
 describe('PM Server connection state', () => {
+  it('keeps Local JSON standalone without constructing or probing a server dependency', async () => {
+    const getHealth = vi.fn<PmHealthApi['getHealth']>();
+    const connection = createPmConnectionForDataMode('local-json', {
+      healthApi: { getHealth },
+      apiClientOptions: { baseUrl: null, isDevelopment: false },
+    });
+
+    expect(connection.getState()).toMatchObject({
+      status: 'disabled',
+      lastCheckedAt: null,
+      serverVersion: null,
+      databaseStatus: null,
+      lastError: null,
+    });
+    await expect(connection.refresh()).resolves.toMatchObject({ status: 'disabled' });
+    expect(getHealth).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Server runtime probe with a valid explicit base URL', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      status: 'UP', database: 'UP', version: '0.1.0',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const connection = createPmConnectionForDataMode('server', {
+      apiClientOptions: {
+        baseUrl: 'https://pm.example.test',
+        isDevelopment: false,
+        fetch: fetchMock,
+        createTraceId: () => 'preview-server-probe',
+      },
+      now: () => NOW,
+    });
+
+    await connection.refresh();
+
+    expect(connection.getState()).toMatchObject({
+      status: 'connected',
+      serverVersion: '0.1.0',
+      databaseStatus: 'UP',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe('https://pm.example.test/api/v1/health');
+  });
+
+  it('fails clearly when Server mode has no production base URL', () => {
+    expect(() => createPmConnectionForDataMode('server', {
+      apiClientOptions: { baseUrl: null, isDevelopment: false },
+    })).toThrow(PmApiConfigError);
+  });
+
   it('starts unknown, exposes checking, then becomes connected for UP/UP', async () => {
     let finish: ((health: PmHealthResponse) => void) | undefined;
     const connection = createPmServerConnection({

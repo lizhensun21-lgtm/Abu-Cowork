@@ -1,0 +1,18 @@
+{
+  "displayName": "Abu Project Management",
+  "productVersion": "0.1.0-rc.1",
+  "upstreamBaseVersion": "0.41.0",
+  "editionLabel": "Project Management Edition",
+  "channelLabel": "RC1 Preview",
+  "projectManagementDataMode": "local-json",
+  "distribution": "abu-project-management",
+  "officialBuild": false,
+  "appId": "com.abu.projectmanagement.preview",
+  "executableName": "Abu Project Management",
+  "windowsArtifactName": "Abu-Project-Management-RC1-Preview-windows-x64-setup.exe",
+  "protocol": "abu-project-management-preview",
+  "devProtocol": "abu-project-management-preview-dev",
+  "domainDataNamespace": "com.abu.projectmanagement.preview",
+  "userDataNamespace": "com.abu.projectmanagement.preview.user-data",
+  "e2eUserDataNamespace": "com.abu.projectmanagement.preview.e2e-user-data"
+}

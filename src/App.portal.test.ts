@@ -19,8 +19,9 @@ const { initializePmServerConnection, refreshPmServerConnection } = vi.hoisted((
 
 vi.mock('@/project-management/api/pmServerConnection', () => ({
   initializePmServerConnection,
+  isPmServerRuntimeEnabled: () => false,
   refreshPmServerConnection,
-  usePmServerConnectionState: () => 'unknown',
+  usePmServerConnectionState: () => 'disabled',
 }));
 
 vi.mock('@/components/project-management/ProjectManagementWorkspace', () => ({

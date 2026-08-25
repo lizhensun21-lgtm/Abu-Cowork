@@ -48,6 +48,9 @@ import {
 
 const require = createRequire(import.meta.url);
 const { getCurrentFuseWire, FuseV1Options } = require('@electron/fuses');
+const PRODUCT_IDENTITY = JSON.parse(
+  fs.readFileSync(new URL('../product-identity.json', import.meta.url), 'utf8'),
+);
 const FUSE_DISABLED = '0'.charCodeAt(0);
 const FUSE_ENABLED = '1'.charCodeAt(0);
 const OUT = process.env.ABU_ELECTRON_SMOKE_OUTPUT || 'release-electron';
@@ -74,8 +77,8 @@ const SIGNATURE_VARIANT_RESOURCE_ROOTS = [
 function findPackagedApp(outputRoot) {
   const macArches = ['mac-arm64', 'mac', 'mac-x64', 'mac-universal'];
   for (const a of macArches) {
-    const appDir = path.join(outputRoot, a, 'Abu.app');
-    const bin = path.join(appDir, 'Contents', 'MacOS', 'Abu');
+    const appDir = path.join(outputRoot, a, `${PRODUCT_IDENTITY.displayName}.app`);
+    const bin = path.join(appDir, 'Contents', 'MacOS', PRODUCT_IDENTITY.executableName);
     if (fs.existsSync(bin)) {
       return {
         appPath: appDir,
@@ -86,7 +89,10 @@ function findPackagedApp(outputRoot) {
     }
   }
   // linux --dir
-  for (const name of ['abu', 'Abu']) {
+  for (const name of [
+    PRODUCT_IDENTITY.executableName.toLowerCase().replaceAll(' ', '-'),
+    PRODUCT_IDENTITY.executableName,
+  ]) {
     const bin = path.join(outputRoot, 'linux-unpacked', name);
     if (fs.existsSync(bin)) {
       const packageRoot = path.join(outputRoot, 'linux-unpacked');
@@ -99,7 +105,11 @@ function findPackagedApp(outputRoot) {
     }
   }
   // win --dir
-  const winBin = path.join(outputRoot, 'win-unpacked', 'Abu.exe');
+  const winBin = path.join(
+    outputRoot,
+    'win-unpacked',
+    `${PRODUCT_IDENTITY.executableName}.exe`,
+  );
   if (fs.existsSync(winBin)) {
     const packageRoot = path.join(outputRoot, 'win-unpacked');
     return {
@@ -2085,13 +2095,13 @@ async function main() {
     const isPackaged = await app.evaluate(({ app: a }) => a.isPackaged);
     checks.isPackaged = isPackaged === true;
     const packagedAppName = await app.evaluate(({ app: a }) => a.getName());
-    checks.packagedProductIdentity = packagedAppName === 'Abu';
+    checks.packagedProductIdentity = packagedAppName === PRODUCT_IDENTITY.displayName;
     const reportedAppData = await app.evaluate(({ app: a }) => a.getPath('appData'));
     checks.appDataIsolated = path.resolve(reportedAppData) === path.resolve(appDataDir);
     const reportedUserData = await app.evaluate(({ app: a }) => a.getPath('userData'));
     checks.userDataIsolated =
       path.resolve(reportedUserData) ===
-      path.resolve(appDataDir, 'Abu-e2e-user-data');
+      path.resolve(appDataDir, PRODUCT_IDENTITY.e2eUserDataNamespace);
     const windowChrome = await app.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()
         .find((candidate) => candidate.webContents.getURL().includes('/dist-electron-spike/index.html'));

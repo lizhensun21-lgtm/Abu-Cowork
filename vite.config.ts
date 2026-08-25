@@ -3,25 +3,29 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { version as packageVersion } from './package.json'
+import productIdentity from './product-identity.json'
 
 // electron-builder can override extraMetadata.version for an RC/release
 // candidate, but the renderer is compiled before that packaging step. CI must
 // pass the same candidate here or the About screen and diagnostics will claim
 // the package.json version while Electron's app.getVersion() reports another
 // one (for example UI 0.34.0 inside an actual 0.34.0-rc.38 bundle).
-const version = process.env.ABU_BUILD_VERSION?.trim() || packageVersion
+const version = process.env.ABU_BUILD_VERSION?.trim() || productIdentity.productVersion
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error(`Invalid ABU_BUILD_VERSION: ${version}`)
 }
 
 const DISTRIBUTIONS = ['upstream-official', 'abu-project-management', 'source'] as const
-const distribution = process.env.ABU_DISTRIBUTION?.trim() || 'abu-project-management'
+const distribution = process.env.ABU_DISTRIBUTION?.trim() || productIdentity.distribution
 if (!DISTRIBUTIONS.includes(distribution as (typeof DISTRIBUTIONS)[number])) {
   throw new Error(`Invalid ABU_DISTRIBUTION: ${distribution}`)
 }
-const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || '0.41.0'
+const upstreamBaseVersion = process.env.ABU_UPSTREAM_BASE_VERSION?.trim() || productIdentity.upstreamBaseVersion
 if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
   throw new Error(`Invalid ABU_UPSTREAM_BASE_VERSION: ${upstreamBaseVersion}`)
+}
+if (packageVersion !== productIdentity.productVersion) {
+  throw new Error(`package.json version must match product identity: ${productIdentity.productVersion}`)
 }
 
 // Build target switch: OSS (default) or Enterprise

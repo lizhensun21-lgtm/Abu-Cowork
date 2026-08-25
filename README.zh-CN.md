@@ -4,14 +4,15 @@
 
 [English](README.md) | **中文**
 
-# Abu (阿布)
+# Abu Project Management
 
-**你的 AI 桌面办公搭子 — 交给阿布就行啦**
+**Project Management Edition · RC1 Preview**
 
-本地运行的 AI 桌面办公助手，灵感来自 Claude Code 的 Cowork 模式。
-你说需求，阿布干活 — 读文件、跑命令、写文档、做报表，全在本地完成。
+Abu Project Management 是基于
+[上游 Abu v0.41.0](https://github.com/PM-Shawn/Abu-Cowork)
+开发的独立项目管理 fork/edition。它保留 Abu 本地桌面助手，并加入基于
+Local JSON 的 Project Management Portal。本 Preview 不是上游官方发行版。
 
-[![Release](https://img.shields.io/github/v/release/PM-Shawn/Abu-Cowork?style=flat-square)](https://github.com/PM-Shawn/Abu-Cowork/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 [下载安装](#下载安装) · [快速开始](#快速开始) · [功能介绍](#功能介绍) · [使用指南](docs/User-Guide.zh-CN.md) · [从源码构建](#从源码构建)
@@ -41,11 +42,11 @@
 
 ## 最近更新
 
-**[下载最新稳定版](https://github.com/PM-Shawn/Abu-Cowork/releases/latest)** · [查看完整更新日志](CHANGELOG.zh-CN.md)
+Preview 产品版本：**0.1.0-rc.1** · 上游底座：**0.41.0** · [查看更新日志](CHANGELOG.zh-CN.md)
 
 近期亮点：**工作区文件树 + 代码画布**（侧栏浏览 / 预览 / 编辑文件，CodeMirror 改源码自动存盘，预览自动刷新，版本快照可回退）、**进度面板改声明式**（模型通过 `report_plan` 自己声明步骤和状态）、**内联可视化 widget**（图表 / HTML / Mermaid 直接渲进对话）、**供应商多接入预设**（火山 / 百炼 / 智谱多套餐做成预设 + 新增编辑弹窗统一）、**能力按模型声明**（视觉 / 工具 / 思考 / Token 上限每模型独立），外加 **文档评论到对话**、**全量国际化**、**签名 + 公证的 macOS 发布包**。
 
-> 每个版本的完整 changelog 见 [Releases](https://github.com/PM-Shawn/Abu-Cowork/releases)。
+> 上游发行历史仍可在 [Abu 源码仓库](https://github.com/PM-Shawn/Abu-Cowork) 查看；其中的安装包不是本 Preview。
 
 ## 产品预览
 
@@ -193,15 +194,15 @@
 
 ## 下载安装
 
-前往 [GitHub Releases](https://github.com/PM-Shawn/Abu-Cowork/releases) 下载最新版本：
+Preview artifact 由当前 fork 生成；上游 Abu 安装包不是 Abu Project Management Preview 安装包。
 
 | 平台 | 文件 |
 |------|------|
-| macOS (Apple Silicon) | `Abu-x.x.x-mac-arm64.dmg` |
-| macOS (Intel) | `Abu-x.x.x-mac-x64.dmg` |
-| Windows x64 | `Abu-x.x.x-windows-x64-setup.exe` |
+| Windows x64 | `Abu-Project-Management-RC1-Preview-windows-x64-setup.exe` |
 
-> 官方 macOS 包已签名并公证。Windows 使用当前用户级安装包，不需要管理员权限，但暂未进行 Authenticode 签名；SmartScreen 可能需要选择 **更多信息 → 仍要运行**。详见[安装指南](docs/Installation-Guide.zh-CN.md)。
+> Preview Windows 安装包仅面向当前用户且不请求管理员权限。RC1 Preview
+> 暂未进行 Authenticode 签名；SmartScreen 可能需要选择 **更多信息 → 仍要运行**。
+> 详见[安装指南](docs/Installation-Guide.zh-CN.md)。
 
 ## 快速开始
 
@@ -287,8 +288,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/PM-Shawn/Abu-Cowork.git
-cd Abu-Cowork
+git clone <fork-repository-url> Abu-Project-Management
+cd Abu-Project-Management
 
 # 准备 worktree 内独立的依赖、Electron/浏览器运行时、Sidecar、
 # 原生辅助程序、沙箱启动器和 OSS 前端
@@ -418,4 +419,4 @@ src-tauri/
 
 ## 许可证
 
-**[Apache License 2.0](LICENSE)** — 可自由使用、修改、分发，包括商业用途，需保留版权声明。**企业版需购买授权**，提供团队协作、SSO、审计与私有部署支持，[联系购买](mailto:pmshawn@163.com)。
+**[Apache License 2.0](LICENSE)** — 可按许可证条款使用、修改和分发，且需保留版权声明。本 fork 保留 Abu 上游归属与 `Copyright 2026 Shawn` 声明；打包 notice 索引见 [Third-Party Notices](legal/THIRD_PARTY_NOTICES.md)。

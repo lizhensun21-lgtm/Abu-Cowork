@@ -2537,6 +2537,7 @@ export interface TranslationDict {
     distribution: string;
     projectManagementEdition: string;
     basedOn: string;
+    dataMode: string;
     updateChannel: string;
     updateChannelDisabled: string;
   };
@@ -2555,6 +2556,9 @@ export interface TranslationDict {
     /** Suffix appended after the disclaimer link label, e.g. " (Full)". */
     disclaimerFullSuffix: string;
     licenseLinkLabel: string;
+    upstreamSource: string;
+    forkAttribution: string;
+    legalCopyright: string;
     disclaimerTitle: string;
     disclaimerClose: string;
   };

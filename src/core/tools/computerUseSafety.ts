@@ -17,7 +17,8 @@ import policy from './computerUsePolicy.json';
 // line (permission plan §4.6 ②) — an agent must never be able to operate the
 // UI that grants agents permission, nor its own app:
 //
-//  - `com.abu.app` — Abu itself. Driving our own window would let a single
+//  - `com.abu.app` and `com.abu.projectmanagement.preview` — upstream Abu and
+//    this Preview. Driving our own window would let a single
 //    injected instruction click through Abu's confirmation dialogs, flip the
 //    permission mode, or approve a site, converting one approval into a
 //    permanent back door. (The dev shell runs under Electron's own bundle id
@@ -27,8 +28,8 @@ import policy from './computerUsePolicy.json';
 //  - `com.apple.authorizationhost` — the same authorization flow's other
 //    process identity.
 //
-// Windows gets `abu` / `abu.exe` for the same self-protection reason
-// (electron-builder productName is "Abu"; Windows matches on process name).
+// Windows gets both the upstream and Preview executable names for the same
+// self-protection reason (Windows matches on process name).
 const HARD_DENY_MACOS = new Set(policy.macos.hardDeny);
 const APPROVAL_REQUIRED_MACOS = new Set(policy.macos.approvalRequired);
 const HARD_DENY_WINDOWS = new Set(policy.windows.hardDeny.map((value) => value.toLowerCase()));

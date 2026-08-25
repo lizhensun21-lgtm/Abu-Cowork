@@ -1,5 +1,5 @@
 /**
- * Deep-link (`abu://enroll`) end-to-end verification — boots a real (hidden)
+ * Preview deep-link end-to-end verification — boots a real (hidden)
  * Electron window with the PRODUCTION preload + registerTauriHost + initDeepLink,
  * then drives the exact path a real deep link takes: an `open-url` event in the
  * MAIN process → normalize/queue/flush → delivery to a REAL renderer subscriber
@@ -9,13 +9,13 @@
  *
  * Checks:
  *  1. Pure parser (used by all three arrival sources): normalizeDeepLinkUrl
- *     rewrites the dev scheme abu-dev://→abu://, passes canonical abu://,
+ *     rewrites the dev scheme to the canonical Preview scheme,
  *     rejects unknown hosts and foreign schemes; extractDeepLinkFromArgv finds
  *     the URL in a commandLine array.
  *  2. FLUSH-ON-SUBSCRIBE race (the core design property): fire a running-app
  *     deep link BEFORE any renderer subscriber exists → it must be queued (not
  *     lost) → then register onOpenUrl → the queued URL is flushed and delivered,
- *     normalized to abu://.
+ *     normalized to the Preview scheme.
  *  3. Subscriber-already-present: a second open-url is delivered immediately.
  *  4. Whitelist: a non-abu open-url (https://…) is ignored — never reaches the
  *     renderer.
@@ -26,7 +26,7 @@
  * OS fires open-url before app 'ready' cannot be simulated once the harness is
  * already past ready — check #1 exercises the argv/parser path that populates
  * cold-start instead. Real system-level protocol registration (clicking an
- * abu:// link in a browser) needs a signed .app bundle and is a packaging/real-
+ * registered link in a browser) needs a signed .app bundle and is a packaging/real-
  * machine step.
  *
  * Run: npx electron electron/spike/deepLinkVerify.cjs
@@ -39,7 +39,13 @@ const { pathToFileURL } = require('node:url');
 const { registerTauriHost, emitEvent, getMainWindow } = require('../tauriHost.cjs');
 const { registerPrivilegedWindow } = require('../securityBoundary.cjs');
 const deepLinkHost = require('../deepLinkHost.cjs');
-const { initDeepLink, normalizeDeepLinkUrl, extractDeepLinkFromArgv } = deepLinkHost;
+const {
+  DEV_SCHEME,
+  PROD_SCHEME,
+  initDeepLink,
+  normalizeDeepLinkUrl,
+  extractDeepLinkFromArgv,
+} = deepLinkHost;
 
 app.on('window-all-closed', () => app.quit());
 
@@ -85,17 +91,17 @@ app.whenReady().then(async () => {
   // ── 1) pure parser ──
   try {
     checks.normalizeRewritesDevScheme =
-      normalizeDeepLinkUrl('abu-dev://enroll?server=https://ex.com&token=t') ===
-      'abu://enroll?server=https://ex.com&token=t';
+      normalizeDeepLinkUrl(`${DEV_SCHEME}://enroll?server=https://ex.com&token=t`) ===
+      `${PROD_SCHEME}://enroll?server=https://ex.com&token=t`;
     checks.normalizePassesCanonical =
-      normalizeDeepLinkUrl('abu://enroll?server=https://ex.com') ===
-      'abu://enroll?server=https://ex.com';
-    checks.normalizeRejectsUnknownHost = normalizeDeepLinkUrl('abu://wat?x=1') === null;
+      normalizeDeepLinkUrl(`${PROD_SCHEME}://enroll?server=https://ex.com`) ===
+      `${PROD_SCHEME}://enroll?server=https://ex.com`;
+    checks.normalizeRejectsUnknownHost = normalizeDeepLinkUrl(`${PROD_SCHEME}://wat?x=1`) === null;
     checks.normalizeRejectsForeignScheme = normalizeDeepLinkUrl('https://evil.com') === null;
     checks.normalizeRejectsGarbage = normalizeDeepLinkUrl('not a url') === null;
     checks.extractFindsUrlInArgv =
-      extractDeepLinkFromArgv(['electron', 'main.cjs', 'abu://enroll?server=x']) ===
-      'abu://enroll?server=x';
+      extractDeepLinkFromArgv(['electron', 'main.cjs', `${PROD_SCHEME}://enroll?server=x`]) ===
+      `${PROD_SCHEME}://enroll?server=x`;
     checks.extractNullWhenNone =
       extractDeepLinkFromArgv(['electron', 'main.cjs', '--flag']) === null;
   } catch (err) {
@@ -103,7 +109,7 @@ app.whenReady().then(async () => {
   }
 
   // ── 2) FLUSH-ON-SUBSCRIBE: fire BEFORE subscribing, must be queued not lost ──
-  fireOpenUrl('abu-dev://enroll?server=https://queued.example.com&token=q1');
+  fireOpenUrl(`${DEV_SCHEME}://enroll?server=https://queued.example.com&token=q1`);
   await sleep(50);
   // No subscriber yet → nothing delivered. Now register the real onOpenUrl.
   // Register the subscriber exactly as @tauri-apps/plugin-deep-link's onOpenUrl
@@ -133,14 +139,14 @@ app.whenReady().then(async () => {
   let received = await readReceived();
   checks.queuedUrlFlushedOnSubscribe =
     received.length === 1 &&
-    received[0] === 'abu://enroll?server=https://queued.example.com&token=q1';
+    received[0] === `${PROD_SCHEME}://enroll?server=https://queued.example.com&token=q1`;
 
   // ── 3) subscriber present → immediate delivery ──
-  fireOpenUrl('abu-dev://enroll?server=https://live.example.com&token=q2');
+  fireOpenUrl(`${DEV_SCHEME}://enroll?server=https://live.example.com&token=q2`);
   await sleep(80);
   received = await readReceived();
   checks.liveUrlDeliveredImmediately =
-    received.length === 2 && received[1] === 'abu://enroll?server=https://live.example.com&token=q2';
+    received.length === 2 && received[1] === `${PROD_SCHEME}://enroll?server=https://live.example.com&token=q2`;
 
   // ── 4) whitelist: non-abu url ignored ──
   fireOpenUrl('https://evil.example.com/steal');

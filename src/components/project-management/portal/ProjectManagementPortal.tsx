@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   initializePmServerConnection,
+  isPmServerRuntimeEnabled,
   refreshPmServerConnection,
   usePmServerConnectionState,
 } from '@/project-management/api/pmServerConnection';
@@ -50,16 +51,18 @@ export default function ProjectManagementPortal() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const setViewMode = useSettingsStore((state) => state.setViewMode);
   const { user, openAccountSettings } = usePortalUserAdapter();
+  const serverRuntimeEnabled = isPmServerRuntimeEnabled();
   const serverConnectionStatus = usePmServerConnectionState((state) => state.status);
 
   useEffect(() => {
+    if (!serverRuntimeEnabled) return undefined;
     void initializePmServerConnection();
     const refreshOnFocus = () => {
       void refreshPmServerConnection();
     };
     window.addEventListener('focus', refreshOnFocus);
     return () => window.removeEventListener('focus', refreshOnFocus);
-  }, []);
+  }, [serverRuntimeEnabled]);
 
   const navigation: PortalNavigationItem[] = [
     { view: 'overview', icon: LayoutDashboard, label: t.projectManagementPortal.overview },

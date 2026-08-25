@@ -7,7 +7,6 @@ import {
   Globe,
   Palette,
   HelpCircle,
-  MessageCircle,
   RefreshCw,
   RotateCcw,
   Download,
@@ -279,13 +278,6 @@ export default function AccountMenu({ onEditProfile }: { onEditProfile: () => vo
                 aria-hidden="true"
               />
             }
-          />
-
-          {/* Feedback */}
-          <MenuRow
-            icon={MessageCircle}
-            label={t.about.feedback}
-            onClick={() => run(() => openSystemSettings('feedback'))}
           />
 
           {ABU_DISTRIBUTION === 'upstream-official' && (

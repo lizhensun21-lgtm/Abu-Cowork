@@ -56,6 +56,7 @@
 
 const os = require('node:os');
 const { shell, clipboard, dialog, powerSaveBlocker, BrowserWindow } = require('electron');
+const PRODUCT_IDENTITY = require('./productIdentity.cjs');
 const { openChromeExtensionsPage } = require('./chromeExtensionsLauncher.cjs');
 // Top-level is safe: updaterHost's only load-time require is 'electron' (its
 // tauriHost back-reference is lazy inside quitAndInstallIfPending), so there
@@ -127,7 +128,7 @@ function checkFullscreen(event) {
   const isFullscreen = !!(win && !win.isDestroyed() && win.isFullScreen());
   return {
     is_fullscreen: isFullscreen,
-    app_name: isFullscreen ? 'Abu' : null,
+    app_name: isFullscreen ? PRODUCT_IDENTITY.displayName : null,
   };
 }
 

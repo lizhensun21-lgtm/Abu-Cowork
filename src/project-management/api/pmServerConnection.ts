@@ -1,6 +1,11 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 
+import {
+  PROJECT_MANAGEMENT_DATA_MODE,
+  type ProjectManagementDataMode,
+} from '@/config/productIdentity';
+import { PmApiClient, type PmApiClientOptions } from './pmApiClient';
 import { createPmHealthApi, type PmHealthApi } from './pmHealthApi';
 import { PmApiError } from './pmApiError';
 
@@ -9,7 +14,8 @@ export type PmServerConnectionStatus =
   | 'checking'
   | 'connected'
   | 'degraded'
-  | 'unavailable';
+  | 'unavailable'
+  | 'disabled';
 
 export interface PmServerConnectionState {
   readonly status: PmServerConnectionStatus;
@@ -28,6 +34,7 @@ export interface PmServerConnection {
 
 export interface CreatePmServerConnectionOptions {
   readonly healthApi?: PmHealthApi;
+  readonly apiClientOptions?: PmApiClientOptions;
   readonly now?: () => Date;
 }
 
@@ -43,7 +50,8 @@ function localConnectionError(error: unknown): PmApiError {
 export function createPmServerConnection(
   options: CreatePmServerConnectionOptions = {},
 ): PmServerConnection {
-  const healthApi = options.healthApi ?? createPmHealthApi();
+  const healthApi = options.healthApi
+    ?? createPmHealthApi(new PmApiClient(options.apiClientOptions));
   const now = options.now ?? (() => new Date());
   const store = createStore<PmServerConnectionState>()(() => ({
     status: 'unknown',
@@ -106,22 +114,62 @@ export function createPmServerConnection(
   };
 }
 
+function createDisabledPmServerConnection(): PmServerConnection {
+  const state: PmServerConnectionState = {
+    status: 'disabled',
+    lastCheckedAt: null,
+    serverVersion: null,
+    databaseStatus: null,
+    lastError: null,
+  };
+  const store = createStore<PmServerConnectionState>()(() => state);
+
+  return {
+    getState: store.getState,
+    subscribe: store.subscribe,
+    refresh: async () => store.getState(),
+    dispose: () => undefined,
+    useStore: <T>(selector: (connectionState: PmServerConnectionState) => T) => (
+      useStore(store, selector)
+    ),
+  };
+}
+
+export function isPmServerRuntimeEnabled(
+  dataMode: ProjectManagementDataMode = PROJECT_MANAGEMENT_DATA_MODE,
+): boolean {
+  return dataMode === 'server';
+}
+
+export function createPmConnectionForDataMode(
+  dataMode: ProjectManagementDataMode,
+  options: CreatePmServerConnectionOptions = {},
+): PmServerConnection {
+  return isPmServerRuntimeEnabled(dataMode)
+    ? createPmServerConnection(options)
+    : createDisabledPmServerConnection();
+}
+
 let runtimeConnection: PmServerConnection | null = null;
 let runtimeInitialized = false;
 
 export function getPmServerConnection(): PmServerConnection {
-  runtimeConnection ??= createPmServerConnection();
+  runtimeConnection ??= createPmConnectionForDataMode(PROJECT_MANAGEMENT_DATA_MODE);
   return runtimeConnection;
 }
 
 export function initializePmServerConnection(): Promise<PmServerConnectionState> {
   const connection = getPmServerConnection();
+  if (!isPmServerRuntimeEnabled()) return Promise.resolve(connection.getState());
   if (runtimeInitialized) return Promise.resolve(connection.getState());
   runtimeInitialized = true;
   return connection.refresh();
 }
 
 export function refreshPmServerConnection(): Promise<PmServerConnectionState> {
+  if (!isPmServerRuntimeEnabled()) {
+    return Promise.resolve(getPmServerConnection().getState());
+  }
   return getPmServerConnection().refresh();
 }
 

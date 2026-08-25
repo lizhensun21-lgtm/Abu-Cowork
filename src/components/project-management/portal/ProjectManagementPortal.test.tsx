@@ -12,17 +12,18 @@ import ProjectManagementPortal, {
   DEFAULT_PROJECT_MANAGEMENT_PORTAL_VIEW,
 } from './ProjectManagementPortal';
 
-const { initializePmServerConnection } = vi.hoisted(() => ({
+const connectionMocks = vi.hoisted(() => ({
   initializePmServerConnection: vi.fn().mockResolvedValue(undefined),
-}));
-const { refreshPmServerConnection } = vi.hoisted(() => ({
   refreshPmServerConnection: vi.fn().mockResolvedValue(undefined),
+  serverRuntimeEnabled: false,
+  status: 'disabled',
 }));
 
 vi.mock('@/project-management/api/pmServerConnection', () => ({
-  initializePmServerConnection,
-  refreshPmServerConnection,
-  usePmServerConnectionState: () => 'unknown',
+  initializePmServerConnection: connectionMocks.initializePmServerConnection,
+  isPmServerRuntimeEnabled: () => connectionMocks.serverRuntimeEnabled,
+  refreshPmServerConnection: connectionMocks.refreshPmServerConnection,
+  usePmServerConnectionState: () => connectionMocks.status,
 }));
 
 vi.mock('@/components/project-management/ProjectManagementWorkspace', () => ({
@@ -37,6 +38,9 @@ vi.mock('./ProjectManagementPortalModules', () => ({
 
 describe('ProjectManagementPortal', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    connectionMocks.serverRuntimeEnabled = false;
+    connectionMocks.status = 'disabled';
     setLanguage('en-US');
     useSettingsStore.setState({
       viewMode: 'project-management',
@@ -55,8 +59,8 @@ describe('ProjectManagementPortal', () => {
     expect(screen.getByTestId('project-management-workspace')).toBeInTheDocument();
     expect(screen.queryByText('New Task')).not.toBeInTheDocument();
     expect(document.querySelector('[data-project-management-portal]'))
-      .toHaveAttribute('data-pm-server-connection', 'unknown');
-    expect(initializePmServerConnection).toHaveBeenCalledTimes(1);
+      .toHaveAttribute('data-pm-server-connection', 'disabled');
+    expect(connectionMocks.initializePmServerConnection).not.toHaveBeenCalled();
   });
 
   it('switches local portal views without changing the top-level Desktop view mode', async () => {
@@ -73,12 +77,24 @@ describe('ProjectManagementPortal', () => {
     expect(screen.getByTestId('project-management-workspace')).toBeInTheDocument();
   });
 
-  it('refreshes health on focus without polling or touching ProjectGraph', () => {
+  it('does not initialize or refresh PM health in Local JSON mode', () => {
     render(<ProjectManagementPortal />);
 
     window.dispatchEvent(new Event('focus'));
 
-    expect(refreshPmServerConnection).toHaveBeenCalledTimes(1);
+    expect(connectionMocks.initializePmServerConnection).not.toHaveBeenCalled();
+    expect(connectionMocks.refreshPmServerConnection).not.toHaveBeenCalled();
+  });
+
+  it('initializes and refreshes PM health on focus in Server mode', () => {
+    connectionMocks.serverRuntimeEnabled = true;
+    connectionMocks.status = 'unknown';
+    render(<ProjectManagementPortal />);
+
+    expect(connectionMocks.initializePmServerConnection).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event('focus'));
+
+    expect(connectionMocks.refreshPmServerConnection).toHaveBeenCalledTimes(1);
   });
 
   it('routes every I10 entry to a real module while preserving sidebar state', async () => {

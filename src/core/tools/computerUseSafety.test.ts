@@ -24,6 +24,12 @@ describe('self-protection hard deny', () => {
   it('refuses to operate Abu itself in every permission mode', () => {
     const blocked = checkSensitiveApp('com.abu.app', 'Abu', { approvalHandledByHost: true });
     expect(blocked).toContain('不允许操控');
+    const previewBlocked = checkSensitiveApp(
+      'com.abu.projectmanagement.preview',
+      'Abu Project Management',
+      { approvalHandledByHost: true },
+    );
+    expect(previewBlocked).toContain('不允许操控');
   });
 
   it('refuses to operate the macOS authorization prompt', () => {

@@ -1,10 +1,9 @@
 import { useEffect } from 'react';
 import { useSettingsStore, type SystemSettingsTab } from '@/stores/settingsStore';
 import { useI18n } from '@/i18n';
-import { Settings2, Info, Shield, SlidersHorizontal, MessageCircle, Radio, Brain, Heart, Activity, BarChart3, Building2, FlaskConical, PawPrint, Zap } from 'lucide-react';
+import { Settings2, Info, Shield, SlidersHorizontal, Radio, Brain, Heart, Activity, BarChart3, Building2, FlaskConical, PawPrint, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AIServicesSection, AboutSection, SandboxSection, GeneralSection, CapabilitiesSection, IMChannelSection } from './sections';
-import FeedbackSection from './sections/FeedbackSection';
 import PersonalMemorySection from './sections/PersonalMemorySection';
 import SoulSection from './sections/SoulSection';
 import DiagnosticSection from './sections/DiagnosticSection';
@@ -67,7 +66,6 @@ export default function SystemSettingsView() {
     // hidden in OSS builds (bind flow / business modules aren't public product).
     [
       { id: 'diagnostic', label: t.diagnostic.title, icon: Activity },
-      { id: 'feedback', label: t.about.feedback, icon: MessageCircle },
       { id: 'about', label: t.common.version, icon: Info },
       ...(IS_ENTERPRISE_BUILD
         ? [{ id: 'enterprise' as SystemSettingsTab, label: t.settings.enterpriseMode, icon: Building2 }]
@@ -99,8 +97,6 @@ export default function SystemSettingsView() {
         return <DiagnosticSection />;
       case 'about':
         return <AboutSection />;
-      case 'feedback':
-        return <FeedbackSection />;
       case 'pet':
         // Guard the one-frame window before the fallback effect fires: never
         // render the pet pane (with its enable toggle) while locked.
